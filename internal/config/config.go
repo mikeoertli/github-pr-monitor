@@ -30,6 +30,7 @@ type Jenkins struct {
 }
 
 type Config struct {
+	NoColor        bool      `toml:"no_color"`
 	Startup        string    `toml:"startup"`
 	AutoQuit       string    `toml:"auto_quit"`
 	Interval       string    `toml:"interval"`

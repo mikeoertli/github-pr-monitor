@@ -2,18 +2,18 @@ package app
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Reuse the live CLI's flag definitions so generated completions stay in sync.
 // The command tree is used only for script generation and completion requests;
 // no completion can start monitoring, read credentials, or call a remote API.
-func runCompletion(flags *flag.FlagSet, args []string, out, stderr io.Writer) error {
+func runCompletion(flags *pflag.FlagSet, args []string, out, stderr io.Writer) error {
 	root := &cobra.Command{
 		Use: "gprm", Short: "GitHub PR and build tracker",
 		SilenceUsage: true, SilenceErrors: true,
@@ -27,8 +27,7 @@ func runCompletion(flags *flag.FlagSet, args []string, out, stderr io.Writer) er
 	root.CompletionOptions.DisableDefaultCmd = true
 	// The monitoring CLI has --help, but no "help" subcommand to suggest.
 	root.SetHelpCommand(&cobra.Command{Use: "help", Hidden: true})
-	root.Flags().AddGoFlagSet(flags)
-	root.Flags().SetInterspersed(false)
+	root.Flags().AddFlagSet(flags)
 	values := map[string][]string{
 		"startup":   {"restore", "clipboard", "empty", "auto-discover"},
 		"auto-quit": {"never", "builds-finished", "all-passing", "all-closed"},

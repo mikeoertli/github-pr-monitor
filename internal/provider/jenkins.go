@@ -212,6 +212,7 @@ func (j *Jenkins) Enrich(ctx context.Context, job core.Job) core.Job {
 			elapsed := max(int64(0), time.Now().UnixMilli()-b.Timestamp)
 			job.Progress = min(.99, float64(elapsed)/float64(estimate))
 			job.Estimated = true
+			job.ExpectedDuration = time.Duration(estimate) * time.Millisecond
 			if elapsed > estimate {
 				job.Phase = "Building · +" + core.Duration(time.Duration(elapsed-estimate)*time.Millisecond) + " over estimate"
 			}

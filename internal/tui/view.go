@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -18,8 +17,8 @@ var good = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#4ade80"
 var bad = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#f87171", Light: "#b91c1c"})
 var warn = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Dark: "#facc15", Light: "#a16207"})
 
-func paint(style lipgloss.Style, s string) string {
-	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+func (m *Model) paint(style lipgloss.Style, s string) string {
+	if m.noColor() {
 		return s
 	}
 	return style.Render(s)
@@ -27,17 +26,6 @@ func paint(style lipgloss.Style, s string) string {
 func cell(s string, n int) string {
 	s = ansi.Truncate(s, max(n, 1), "…")
 	return s + strings.Repeat(" ", max(0, n-ansi.StringWidth(s)))
-}
-func bar(p float64, estimated bool) string {
-	if p < 0 {
-		return paint(muted, "░░░░░░░░░░  —   ")
-	}
-	n := max(0, min(10, int(p*10)))
-	mark := " "
-	if estimated && p < 1 {
-		mark = "~"
-	}
-	return paint(good, strings.Repeat("█", n)) + paint(muted, strings.Repeat("░", 10-n)) + fmt.Sprintf(" %s%3.0f%%", mark, p*100)
 }
 func providers(p core.PR) string {
 	seen := map[string]bool{}
@@ -80,7 +68,10 @@ func primaryJob(p core.PR) *core.Job {
 	}
 	return nil
 }
-func (m *Model) View() string {
+func (m *Model) View() (view string) {
+	if m.noColor() {
+		defer func() { view = ansi.Strip(view) }()
+	}
 	if m.help {
 		return m.helpView()
 	}
@@ -102,7 +93,7 @@ func (m *Model) View() string {
 	if m.Config.Descending {
 		dir = "↓"
 	}
-	add(paint(accent, state+" gprm") + paint(muted, fmt.Sprintf("%s  ·  every %s  ·  sort %s%s  ·  quit %s", demo, m.Config.Interval, m.Config.Sort, dir, m.Config.AutoQuit)))
+	add(m.paint(accent, state+" gprm") + m.paint(muted, fmt.Sprintf("%s  ·  every %s  ·  sort %s%s  ·  quit %s", demo, m.Config.Interval, m.Config.Sort, dir, m.Config.AutoQuit)))
 	count, passed, running, stale := 0, 0, 0, 0
 	for _, p := range m.PRs {
 		if p.Removed {
@@ -122,22 +113,22 @@ func (m *Model) View() string {
 	if m.filter != "" {
 		filter = fmt.Sprintf(" · filter %q", core.Clean(m.filter))
 	}
-	add(paint(muted, fmt.Sprintf("%d PRs  ·  %d building  ·  %d passing  ·  %d stale%s", count, running, passed, stale, filter)))
+	add(m.paint(muted, fmt.Sprintf("%d PRs  ·  %d building  ·  %d passing  ·  %d stale%s", count, running, passed, stale, filter)))
 	add("")
 	ci := m.showCI() && width >= 110
 	repoWidth := max(18, min(34, width/4))
-	phaseWidth := max(10, width-repoWidth-53)
+	phaseWidth := max(10, width-repoWidth-55)
 	if ci {
 		phaseWidth -= 17
 	}
-	header := cell("REPOSITORY / PR", repoWidth) + "  " + cell("PROGRESS", 17) + "  " + cell("BUILD", 10) + "  " + cell("STATUS", 14)
+	header := "  " + cell("REPOSITORY / PR", repoWidth) + "  " + cell("PROGRESS", 17) + "  " + cell("BUILD", 10) + "  " + cell("STATUS", 14)
 	if ci {
 		header += "  " + cell("CI", 15)
 	}
 	if width >= 85 {
 		header += "  PHASE"
 	}
-	add(paint(muted, header))
+	add(m.paint(muted, header))
 	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
 	m.cursor = max(0, min(m.cursor, len(rows)-1))
 	start := max(0, m.cursor-m.visible()+1)
@@ -181,7 +172,7 @@ func (m *Model) View() string {
 		if !p.Fresh && p.Error == "" {
 			status = "loading"
 		}
-		line := cell(fmt.Sprintf("%s #%d", core.Clean(p.Ref.Repo), p.Ref.Number), repoWidth) + "  " + cell(bar(p.Progress(), estimated), 17) + "  " + cell(core.Clean(build), 10) + "  " + paint(color, cell(status, 14))
+		line := "  " + cell(fmt.Sprintf("%s #%d", core.Clean(p.Ref.Repo), p.Ref.Number), repoWidth) + "  " + cell(m.bar(p, estimated, time.Now()), 17) + "  " + cell(core.Clean(build), 10) + "  " + m.paint(color, cell(status, 14))
 		if ci {
 			line += "  " + cell(providers(p), 15)
 		}
@@ -190,7 +181,11 @@ func (m *Model) View() string {
 		}
 		line = ansi.Truncate(line, width, "…")
 		if pos == m.cursor {
-			line = lipgloss.NewStyle().Reverse(true).Render(line)
+			if m.noColor() {
+				line = "› " + strings.TrimPrefix(line, "  ")
+			} else {
+				line = lipgloss.NewStyle().Reverse(true).Render(line)
+			}
 		}
 		add(line)
 	}
@@ -201,10 +196,10 @@ func (m *Model) View() string {
 	for i := used; i < m.visible(); i++ {
 		add("")
 	}
-	add(paint(muted, strings.Repeat("─", width)))
+	add(m.paint(muted, strings.Repeat("─", width)))
 	if i := m.selected(); i >= 0 {
 		p := m.PRs[i]
-		add(paint(accent, core.Clean(p.Title)) + paint(muted, " · "+p.FinalStatus()))
+		add(m.paint(accent, core.Clean(p.Title)) + m.paint(muted, " · "+p.FinalStatus()))
 		if job := m.selectedJob(p); job != nil {
 			label := fmt.Sprintf("[%d/%d] %s · %s · %s", m.jobCursor+1, len(p.Jobs), job.Provider, job.Name, job.Phase)
 			if job.Number != "" {
@@ -225,21 +220,21 @@ func (m *Model) View() string {
 			if p.Error != "" {
 				detail = p.Error
 			}
-			add(paint(muted, core.Clean(detail)))
+			add(m.paint(muted, core.Clean(detail)))
 		} else {
 			add("Waiting for CI checks to be reported by GitHub.")
-			add(paint(muted, core.Clean(p.Error)))
+			add(m.paint(muted, core.Clean(p.Error)))
 		}
 	} else {
 		add("Clipboard accepts several links, including links copied from a message.")
 		add("Build progress: ~ estimated time · Actions: completed steps · — unknown")
 		add("")
 	}
-	add(paint(warn, core.Clean(m.notice)))
+	add(m.paint(warn, core.Clean(m.notice)))
 	if m.mode != "" {
-		add(paint(accent, m.mode+" › ") + m.input.View())
+		add(m.paint(accent, m.mode+" › ") + m.input.View())
 	} else {
-		add(paint(muted, "v paste  a add  d discover  / filter  s sort  r reverse  o PR  b build  ? help  Q quit"))
+		add(m.paint(muted, "v paste  a add  d discover  / filter  s sort  r reverse  o PR  b build  ? help  Q quit"))
 	}
 	// Very short terminals still get the input and key hints.
 	if len(lines) > m.height && m.height > 0 {
@@ -268,7 +263,9 @@ Open          o          selected PR in browser
 Other         ? / Esc    close help
               Q / Ctrl+C quit and print summary
 
-~ progress is a time estimate; — means unknown.
+~ is an estimate; ! means overdue; — means unknown.
+Bars: red → orange → yellow → green; overdue orange/red.
+--no-color disables styling (also NO_COLOR).
 Other CI checks use status from GitHub. No checks never means passing.
 Auto-quit considers all monitored PRs, including filtered-out rows.
 Startup and auto-quit defaults live in gprm_config.toml; flags override them.`

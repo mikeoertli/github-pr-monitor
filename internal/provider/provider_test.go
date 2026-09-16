@@ -268,3 +268,20 @@ func TestQueuedRerunDoesNotDisappearBehindCompletedRun(t *testing.T) {
 		}
 	}
 }
+
+func TestJenkinsOverdueKeepsReferenceDuration(t *testing.T) {
+	j := NewJenkins(config.Defaults())
+	j.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.Contains(r.URL.Path, "lastSuccessfulBuild") {
+			return response(404, ""), nil
+		}
+		if strings.HasSuffix(r.URL.Path, "wfapi/describe") {
+			return response(200, `{"stages":[{"name":"Tests","status":"IN_PROGRESS"}]}`), nil
+		}
+		return response(200, fmt.Sprintf(`{"number":7,"building":true,"timestamp":%d,"estimatedDuration":600000}`, time.Now().Add(-15*time.Minute).UnixMilli())), nil
+	})
+	got := j.Enrich(context.Background(), core.Job{URL: "https://ci.example.com/job/api/7/", Provider: "Jenkins"})
+	if got.Progress != .99 || !got.Estimated || got.ExpectedDuration != 10*time.Minute || got.Status != "running" || !strings.Contains(got.Phase, "Tests · +") || !strings.Contains(got.Phase, "over estimate") {
+		t.Fatalf("bad overrun state: %+v", got)
+	}
+}

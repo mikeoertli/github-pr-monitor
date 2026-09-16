@@ -52,10 +52,11 @@ func TestCompletionValuesAndFlags(t *testing.T) {
 	}{
 		{[]string{"--startup", ""}, []string{"restore", "clipboard", "empty", "auto-discover", ":4"}},
 		{[]string{"--auto-quit", ""}, []string{"never", "builds-finished", "all-passing", "all-closed", ":4"}},
+		{[]string{"-m", ""}, []string{"restore", "clipboard", "empty", "auto-discover", ":4"}},
 		{[]string{"--sort", ""}, []string{"repo", "progress", ":4"}},
 		{[]string{"--interval", ""}, []string{"5s", "10s", "1m"}},
 		{[]string{"completion", ""}, []string{"bash", "zsh", "fish", "powershell"}},
-		{[]string{"--"}, []string{"--config", "--state", "--startup", "--auto-quit", "--interval", "--sort", "--gh", "--demo", "--once", "--init-config", "--version"}},
+		{[]string{"--"}, []string{"--config", "--state", "--startup", "--auto-quit", "--interval", "--sort", "--gh", "--demo", "--once", "--init-config", "--version", "--no-color"}},
 	} {
 		var out, stderr bytes.Buffer
 		if err := Run(append([]string{"__complete"}, tc.args...), &out, &stderr); err != nil {

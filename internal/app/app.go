@@ -3,7 +3,6 @@ package app
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"io"
 	"net/url"
@@ -21,24 +20,27 @@ import (
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
 	"github.com/mikeoertli/github-pr-monitor/internal/provider"
 	"github.com/mikeoertli/github-pr-monitor/internal/tui"
+	"github.com/spf13/pflag"
 )
 
 func Run(args []string, out, stderr io.Writer) error {
-	flags := flag.NewFlagSet("gprm", flag.ContinueOnError)
+	flags := pflag.NewFlagSet("gprm", pflag.ContinueOnError)
 	flags.SetOutput(stderr)
-	cfgPath := flags.String("config", config.Path(), "TOML settings file")
+	cfgPath := flags.StringP("config", "c", config.Path(), "TOML settings file")
 	statePath := flags.String("state", config.StatePath(), "saved monitoring session")
-	startup := flags.String("startup", "", "restore | clipboard | empty | auto-discover")
-	quit := flags.String("auto-quit", "", "never | builds-finished | all-passing | all-closed")
-	interval := flags.String("interval", "", "status refresh interval, e.g. 5s")
-	sortBy := flags.String("sort", "", "repo | progress")
+	startup := flags.StringP("startup", "m", "", "restore | clipboard | empty | auto-discover")
+	quit := flags.StringP("auto-quit", "q", "", "never | builds-finished | all-passing | all-closed")
+	interval := flags.StringP("interval", "i", "", "status refresh interval, e.g. 5s")
+	sortBy := flags.StringP("sort", "s", "", "repo | progress")
 	gh := flags.String("gh", "", "gh executable path")
 	demo := flags.Bool("demo", false, "offline demo (does not read or write your session)")
 	once := flags.Bool("once", false, "fetch once, print a snapshot and summary, then exit")
 	initConfig := flags.Bool("init-config", false, "create a commented config file without overwriting an existing one")
-	version := flags.Bool("version", false, "print version")
+	version := flags.BoolP("version", "V", false, "print version")
+	noColor := flags.Bool("no-color", false, "disable color and text styling")
+	help := flags.BoolP("help", "h", false, "show help")
 	flags.Usage = func() {
-		fmt.Fprint(stderr, "Usage: gprm [flags] [PR-URL | owner/repo#123 ...]\n       gprm completion bash|zsh|fish|powershell\n\nGitHub PR and build tracker. Put flags before PR references.\nDefault: restore previous session; quit when all monitored PRs are merged/closed.\n\n")
+		fmt.Fprint(stderr, "Usage: gprm [flags] [PR-URL | owner/repo#123 ...]\n       gprm completion bash|zsh|fish|powershell\n\nGitHub PR and build tracker. Flags may appear before or after PR references.\nDefault: restore previous session; quit when all monitored PRs are merged/closed.\n\n")
 		flags.PrintDefaults()
 	}
 	// Completion runs before configuration, credentials, or the TUI are touched.
@@ -46,10 +48,14 @@ func Run(args []string, out, stderr io.Writer) error {
 		return runCompletion(flags, args, out, stderr)
 	}
 	if err := flags.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
+	}
+	if *help {
+		flags.Usage()
+		return nil
 	}
 	if *version {
 		fmt.Fprintln(out, "gprm "+project.Version())
@@ -84,6 +90,9 @@ func Run(args []string, out, stderr io.Writer) error {
 	}
 	if *gh != "" {
 		c.Tools.GH = *gh
+	}
+	if flags.Changed("no-color") {
+		c.NoColor = *noColor
 	}
 	if *demo && *quit == "" {
 		c.AutoQuit = "never"

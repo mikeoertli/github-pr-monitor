@@ -79,6 +79,7 @@ type Job struct {
 	Status, Phase               string
 	Progress                    float64 // -1 = unknown; estimates never reach 1 until terminal.
 	Estimated                   bool
+	ExpectedDuration            time.Duration // Reference runtime; separate from completion percentage.
 	StartedAt, CompletedAt      time.Time
 	Duration                    time.Duration
 	Monitored                   time.Duration

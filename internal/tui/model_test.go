@@ -72,23 +72,24 @@ func TestFilterAndAutoQuitUseFullList(t *testing.T) {
 }
 func TestInputNavigationAndRemoval(t *testing.T) {
 	m := demoModel()
+	baseCount := len(m.PRs)
 	m.Update(key("a"))
 	m.input.SetValue("acme/new#4 acme/new#4")
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if len(m.PRs) != 5 || m.mode != "" {
+	if len(m.PRs) != baseCount+1 || m.mode != "" {
 		t.Fatal("batch add failed")
 	}
 	m.Update(key("/"))
 	m.input.SetValue("new")
 	m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if m.selected() != 4 {
+	if m.selected() != baseCount {
 		t.Fatal("filter failed")
 	}
 	m.Update(key("x"))
-	if !m.PRs[4].Removed {
+	if !m.PRs[baseCount].Removed {
 		t.Fatal("remove failed")
 	}
-	if len(m.PRs) != 5 {
+	if len(m.PRs) != baseCount+1 {
 		t.Fatal("removed PR missing from summary")
 	}
 	m.Update(key("s"))

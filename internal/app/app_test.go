@@ -116,3 +116,39 @@ esac
 		t.Fatal(prs)
 	}
 }
+
+func TestStandardFlagsAndNoColor(t *testing.T) {
+	for _, help := range []string{"-h", "--help"} {
+		var out, stderr bytes.Buffer
+		if err := Run([]string{help}, &out, &stderr); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"-h, --help", "-i, --interval", "--no-color"} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("help lacks %s: %s", want, stderr.String())
+			}
+		}
+	}
+	for _, args := range [][]string{{"--demo", "--once", "--no-color"}, {"--demo", "acme/test#1", "--once", "--no-color", "-i", "10s", "-s", "progress", "-m", "empty", "-q", "never"}} {
+		var out, stderr bytes.Buffer
+		if err := Run(args, &out, &stderr); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "\x1b") {
+			t.Fatal("--no-color emitted styling")
+		}
+	}
+	for _, arg := range []string{"-help", "-version", "-interval"} {
+		var out, stderr bytes.Buffer
+		if err := Run([]string{arg}, &out, &stderr); err == nil {
+			t.Fatalf("accepted nonstandard long flag %s", arg)
+		}
+	}
+	var out, stderr bytes.Buffer
+	if err := Run([]string{"-V"}, &out, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out.String(), "gprm ") {
+		t.Fatal(out.String())
+	}
+}

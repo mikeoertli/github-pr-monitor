@@ -106,7 +106,7 @@ gprm --demo --once                           # printable demo snapshot
 gprm --once --startup clipboard              # one live refresh and summary
 ```
 
-Place flags before PR references. Positional PRs are added to the selected startup mode. URLs can include `/files`, `/checks`, query strings, and fragments; they are normalized to the PR. `owner/repo#123` uses `github_host` from settings. Clipboard import extracts links from prose and Markdown and deduplicates them. `clipboard` startup reads once; press `v` to import again.
+Flags can appear before or after PR references. Long options use two dashes (`--help`); short options use one (`-h`). Positional PRs are added to the selected startup mode. URLs can include `/files`, `/checks`, query strings, and fragments; they are normalized to the PR. `owner/repo#123` uses `github_host` from settings. Clipboard import extracts links from prose and Markdown and deduplicates them. `clipboard` startup reads once; press `v` to import again.
 
 Discovery uses your authenticated GitHub account and searches for authored, open PRs. It follows pages up to `discovery_limit` (100 by default, maximum 1000) and reports when the limit is reached. It runs on startup or when you press `d`, not on every refresh.
 
@@ -130,6 +130,7 @@ request_timeout = "20s"
 sort = "repo"              # repo | progress
 descending = false
 ci_column = "auto"         # auto | always | never
+no_color = false
 github_host = "github.com"
 discovery_limit = 100
 
@@ -152,7 +153,7 @@ Repeat `[[jenkins]]` for more servers. The environment variables named by `user_
 
 Paths and arguments are separate: `clipboard = "/path with spaces/helper"` works; `clipboard = "helper --flag"` does not. Commands are executed directly, without a shell. Defaults are `pbpaste`/`open` on macOS, `wl-paste` or `xclip`/`xsel` and `xdg-open` on Linux, and PowerShell clipboard/rundll32 on Windows. Windows integrations are implemented but have not been tested on Windows. Manual paste into the `a` input works when no clipboard helper is available.
 
-CLI overrides: `--startup`, `--auto-quit`, `--interval`, `--sort`, and `--gh`. Overrides affect the current run and do not rewrite your settings. Demo mode uses built-in defaults and CLI overrides; it ignores the config file.
+CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `--sort` (`-s`), `--gh`, and `--no-color`. Use `--config` (`-c`) to select settings, `--help` (`-h`) for usage, and `--version` (`-V`) for the version. Single-dash long spellings such as `-help` are not accepted. Overrides affect the current run and do not rewrite your settings. Demo mode uses built-in defaults and CLI overrides; it ignores the config file.
 
 ## Exit modes
 
@@ -185,7 +186,7 @@ The full monitored list is used, even while filtered. An empty list never auto-q
 | `?` | Show help |
 | `Q` / `q` / `Ctrl+C` | Quit and print the summary |
 
-The table shows the first active check (or the first check when all are finished). The detail pane lets you inspect and open every check. At narrow terminal widths the CI/phase columns are omitted; those details remain in the selected-check pane. `NO_COLOR` disables colors.
+The table shows the first active check (or the first check when all are finished). The detail pane lets you inspect and open every check. At narrow terminal widths the CI/phase columns are omitted; those details remain in the selected-check pane. `--no-color` disables all color and text styling while keeping a plain selection marker. Set `no_color = true` in the config for this default; `--no-color=false` overrides that setting for one run. The `NO_COLOR` environment variable and `TERM=dumb` also disable styling and take precedence over the flag.
 
 ## CI behavior and progress
 
@@ -194,6 +195,8 @@ GitHub is queried through `gh api graphql` with pagination for all check context
 **Jenkins:** the CI URL reported by GitHub is used directly. A direct Jenkins build URL such as `https://ci.example.com/job/api/job/PR-42/17/` enables `/api/json` and optional `/wfapi/describe` requests. There is no legacy/Blue Ocean conversion. Non-build links fall back to the GitHub-reported status with an explanatory detail message. A direct build URL, configured server match, or Jenkins check/provider name identifies Jenkins.
 
 Time estimates prefer the same job's last successful duration, falling back to Jenkins's `estimatedDuration`. Estimates are marked `~`, cap at 99% while running, and display overruns in the phase. Jobs without timing information show unknown progress. Aborted/not-built runs may follow `nextBuild` within the same job, with a bounded chain. Pipeline stages require the [Pipeline REST API plugin](https://plugins.jenkins.io/pipeline-rest-api/); its absence does not prevent build monitoring.
+
+Progress bars are red below 25%, orange from 25%, yellow from 50%, and green from 75% through completion. A running build that exceeds its expected runtime turns orange, then red at 25% overdue. The percentage stays capped at 99% until the build finishes; `!` marks an overdue estimate even with colors disabled. If a PR has several checks, its bar uses the worst active overrun. Completed failures stay red, and unknown or stale progress is muted. The offline demo includes an overdue build.
 
 **GitHub Actions:** active job steps and completed-step progress come from the Actions API; build numbers show the workflow run number and rerun attempt (for example, `42.2`). Workflow names distinguish identically named jobs. If job details are unavailable, GitHub's check status remains available.
 

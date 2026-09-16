@@ -5,6 +5,7 @@ interval = "5s"
 request_timeout = "20s"
 sort = "repo" # repo | progress
 descending = false
+no_color = false # also controlled by --no-color and NO_COLOR
 ci_column = "auto" # auto | always | never
 github_host = "github.com"
 discovery_limit = 100
