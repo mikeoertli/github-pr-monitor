@@ -20,6 +20,7 @@ type Source interface {
 type Actions struct {
 	Clipboard func(context.Context) (string, error)
 	Open      func(context.Context, string) error
+	Copy      func(context.Context, string) error
 }
 type Model struct {
 	Config                                      config.Config
@@ -39,6 +40,8 @@ type Model struct {
 	notice                                      string
 	lastTick, lastPoll, lastSave                time.Time
 	demoStep                                    int
+	expanded                                    map[string]bool
+	scroll, detailScroll                        int
 }
 type tickMsg time.Time
 type pollMsg struct{ PRs []core.PR }
@@ -48,6 +51,11 @@ type importMsg struct {
 	Label string
 }
 type openMsg struct{ Err error }
+type copyMsg struct {
+	Label string
+	Err   error
+	Count int
+}
 
 func New(ctx context.Context, c config.Config, prs []core.PR, source Source, actions Actions, state string, demo bool) *Model {
 	input := textinput.New()
@@ -55,7 +63,7 @@ func New(ctx context.Context, c config.Config, prs []core.PR, source Source, act
 	input.CharLimit = 32768
 	input.Width = 70
 	now := time.Now()
-	return &Model{Context: ctx, Config: c, PRs: prs, Source: source, Actions: actions, StatePath: state, Demo: demo, Started: now, lastTick: now, width: 120, height: 30, input: input}
+	return &Model{Context: ctx, Config: c, PRs: prs, Source: source, Actions: actions, StatePath: state, Demo: demo, Started: now, lastTick: now, width: 120, height: 30, input: input, expanded: map[string]bool{}}
 }
 func (m *Model) Init() tea.Cmd { return tea.Batch(tick(), m.poll()) }
 func tick() tea.Cmd            { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -254,6 +262,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice += " Discovery limit reached; increase discovery_limit for more."
 		}
 		return m, m.poll()
+	case copyMsg:
+		if msg.Err != nil {
+			m.notice = core.Clean(msg.Err.Error())
+		} else if msg.Label != "" {
+			m.notice = "Copied " + msg.Label + "."
+		} else {
+			m.notice = fmt.Sprintf("Copied JSON for %d PR(s).", msg.Count)
+		}
 	case openMsg:
 		if msg.Err != nil {
 			m.notice = core.Clean(msg.Err.Error())
@@ -326,28 +342,56 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.cursor = max(0, m.cursor-1)
 			m.jobCursor = 0
+			m.detailScroll = 0
 		case "down", "j":
 			m.cursor++
 			m.selected()
 			m.jobCursor = 0
+			m.detailScroll = 0
 		case "pgup":
 			m.cursor = max(0, m.cursor-m.visible())
 			m.jobCursor = 0
+			m.detailScroll = 0
 		case "pgdown":
 			m.cursor += m.visible()
 			m.selected()
 			m.jobCursor = 0
+			m.detailScroll = 0
 		case "home", "g":
 			m.cursor = 0
 			m.jobCursor = 0
+			m.detailScroll = 0
 		case "end", "G":
 			m.cursor = len(m.PRs)
 			m.selected()
 			m.jobCursor = 0
-		case "tab", "enter":
+			m.detailScroll = 0
+		case "enter", " ", "right", "left":
+			if i := m.selected(); i >= 0 {
+				url := m.PRs[i].Ref.URL
+				if key == "right" {
+					m.expanded[url] = true
+				} else if key == "left" {
+					m.expanded[url] = false
+				} else {
+					m.expanded[url] = !m.expanded[url]
+				}
+				m.detailScroll = 0
+			}
+		case "]":
+			m.detailScroll++
+		case "[":
+			m.detailScroll = max(0, m.detailScroll-1)
+		case "c", "C":
+			return m, m.copyCommand(key == "C")
+		case "y", "Y":
+			return m, m.copyJSON(key == "Y")
+		case "tab":
 			m.jobCursor++
+			m.detailScroll = 0
 		case "shift+tab":
 			m.jobCursor--
+			m.detailScroll = 0
 		case "s":
 			if m.Config.Sort == "repo" {
 				m.Config.Sort = "progress"
@@ -384,13 +428,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				raw = job.URL
 			}
+			if m.Actions.Open == nil {
+				m.notice = "Browser opening is unavailable."
+				return m, nil
+			}
 			ctx, open := m.Context, m.Actions.Open
 			return m, func() tea.Msg { return openMsg{Err: open(ctx, raw)} }
 		}
 	}
 	return m, nil
 }
-func (m *Model) visible() int { return max(1, m.height-12) }
+func (m *Model) visible() int { return max(1, m.height-8-len(m.footer())) }
 func (m *Model) selectedJob(p core.PR) *core.Job {
 	if len(p.Jobs) == 0 {
 		return nil

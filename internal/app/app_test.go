@@ -2,14 +2,55 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/mikeoertli/github-pr-monitor/internal/config"
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
 )
+
+func TestClipboardWriterHelper(t *testing.T) {
+	if os.Getenv("GPRM_TEST_CLIPBOARD_HELPER") != "1" {
+		return
+	}
+	b, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		os.Exit(2)
+	}
+	if os.Getenv("GPRM_TEST_CLIPBOARD_FAIL") == "1" {
+		os.Exit(3)
+	}
+	if err = os.WriteFile(os.Getenv("GPRM_TEST_CLIPBOARD_FILE"), b, 0600); err != nil {
+		os.Exit(4)
+	}
+	os.Exit(0)
+}
+
+func TestCopyClipboardUsesStdinAndReportsFailure(t *testing.T) {
+	c := config.Defaults()
+	c.Tools.ClipboardWrite = os.Args[0]
+	c.Tools.ClipboardWriteArgs = []string{"-test.run=^TestClipboardWriterHelper$"}
+	path := filepath.Join(t.TempDir(), "copied.json")
+	t.Setenv("GPRM_TEST_CLIPBOARD_HELPER", "1")
+	t.Setenv("GPRM_TEST_CLIPBOARD_FILE", path)
+	want := "{\"title\":\"quotes ' and unicode → $(unchanged)\"}\n"
+	if err := CopyClipboard(context.Background(), c, want); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || string(b) != want {
+		t.Fatalf("clipboard changed: %q %v", b, err)
+	}
+	t.Setenv("GPRM_TEST_CLIPBOARD_FAIL", "1")
+	if err := CopyClipboard(context.Background(), c, want); err == nil {
+		t.Fatal("copy failure hidden")
+	}
+}
 
 func TestVersionAndDefaultConfigInitialization(t *testing.T) {
 	dir := t.TempDir()

@@ -73,10 +73,7 @@ func (j *Jenkins) get(ctx context.Context, raw string, out any) error {
 	}
 	req.Header.Set("Accept", "application/json")
 	authRoot := ""
-	for _, server := range j.Config.Jenkins {
-		if !under(raw, server.URL) {
-			continue
-		}
+	if server := jenkinsServer(j.Config, raw); server != nil {
 		user, token := server.User, server.Token
 		if v := os.Getenv(server.UserEnv); v != "" {
 			user = v
@@ -88,8 +85,8 @@ func (j *Jenkins) get(ctx context.Context, raw string, out any) error {
 			req.SetBasicAuth(user, token)
 			authRoot = server.URL
 		}
-		break
 	}
+
 	client := *j.Client
 	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
 		if len(via) >= 5 {
@@ -132,9 +129,8 @@ func (j *Jenkins) estimate(ctx context.Context, raw string, b build) int64 {
 	if ok {
 		return n
 	}
-	parent := raw[:strings.LastIndex(raw, "/")]
 	var previous build
-	err := j.get(ctx, parent+"/lastSuccessfulBuild/api/json", &previous)
+	err := j.get(ctx, estimateURL(raw), &previous)
 	n = b.EstimatedDuration
 	if err == nil && previous.Duration > 0 {
 		n = previous.Duration
@@ -148,18 +144,23 @@ func (j *Jenkins) estimate(ctx context.Context, raw string, b build) int64 {
 }
 
 func (j *Jenkins) Enrich(ctx context.Context, job core.Job) core.Job {
-	u, e := url.Parse(job.URL)
-	if e != nil || !buildPath.MatchString(u.Path) || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+	raw, e := jenkinsBuildRoot(job.URL)
+	if e != nil {
 		job.Warning = "Jenkins detail URL is not a direct build URL; using GitHub status"
 		return job
 	}
-	raw := strings.TrimRight(job.URL, "/")
+	job.JenkinsRequests = nil
+	get := func(raw string, out any) error {
+		job.JenkinsRequests = append(job.JenkinsRequests, raw)
+		return j.get(ctx, raw, out)
+	}
 	job.Key = "Jenkins/" + raw[:strings.LastIndex(raw, "/")]
 	job.RunID = raw
 	job.Number = raw[strings.LastIndex(raw, "/")+1:]
 	var b build
 	for hop := 0; hop < 8; hop++ {
-		if err := j.get(ctx, raw+"/api/json", &b); err != nil {
+		job.URL, job.RunID, job.Number = raw+"/", raw, raw[strings.LastIndex(raw, "/")+1:]
+		if err := get(raw+"/api/json", &b); err != nil {
 			job.Warning = err.Error()
 			job.Stale = true
 			return job
@@ -207,6 +208,7 @@ func (j *Jenkins) Enrich(ctx context.Context, job core.Job) core.Job {
 		job.Status = "running"
 		job.Phase = "Building"
 		job.Progress = -1
+		job.JenkinsRequests = append(job.JenkinsRequests, estimateURL(raw))
 		estimate := j.estimate(ctx, raw, b)
 		if estimate > 0 && b.Timestamp > 0 {
 			elapsed := max(int64(0), time.Now().UnixMilli()-b.Timestamp)
@@ -226,7 +228,7 @@ func (j *Jenkins) Enrich(ctx context.Context, job core.Job) core.Job {
 	var pipeline struct {
 		Stages []struct{ Name, Status string }
 	}
-	err := j.get(ctx, raw+"/wfapi/describe", &pipeline)
+	err := get(raw+"/wfapi/describe", &pipeline)
 	if err == nil {
 		var active []string
 		for _, stage := range pipeline.Stages {

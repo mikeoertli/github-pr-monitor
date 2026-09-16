@@ -15,6 +15,8 @@ gh = "gh" # executable name or absolute path
 # Empty clipboard/open paths select the platform default.
 clipboard = ""
 clipboard_args = []
+clipboard_write = "" # JSON is sent to this command on stdin
+clipboard_write_args = []
 open = ""
 open_args = []
 # macOS: clipboard = "/usr/bin/pbpaste", open = "/usr/bin/open"

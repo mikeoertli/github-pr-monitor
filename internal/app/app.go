@@ -113,7 +113,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	source := provider.New(c)
-	actions := tui.Actions{Clipboard: func(ctx context.Context) (string, error) { return Clipboard(ctx, c) }, Open: func(ctx context.Context, raw string) error { return Open(ctx, c, raw) }}
+	actions := tui.Actions{Copy: func(ctx context.Context, text string) error { return CopyClipboard(ctx, c, text) }, Clipboard: func(ctx context.Context) (string, error) { return Clipboard(ctx, c) }, Open: func(ctx context.Context, raw string) error { return Open(ctx, c, raw) }}
 	var prs []core.PR
 	if *demo {
 		prs = tui.DemoPRs()
@@ -242,6 +242,37 @@ func Clipboard(ctx context.Context, c config.Config) (string, error) {
 	}
 	return string(b), nil
 }
+
+// CopyClipboard sends JSON via stdin, keeping its contents out of command arguments.
+func CopyClipboard(ctx context.Context, c config.Config, text string) error {
+	path, args := c.Tools.ClipboardWrite, append([]string(nil), c.Tools.ClipboardWriteArgs...)
+	if path == "" {
+		switch runtime.GOOS {
+		case "darwin":
+			path = "/usr/bin/pbcopy"
+		case "windows":
+			path = "powershell.exe"
+			args = []string{"-NoProfile", "-Command", "[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())"}
+		default:
+			if _, err := exec.LookPath("wl-copy"); err == nil {
+				path = "wl-copy"
+			} else if _, err := exec.LookPath("xclip"); err == nil {
+				path, args = "xclip", []string{"-selection", "clipboard", "-in"}
+			} else {
+				path, args = "xsel", []string{"--clipboard", "--input"}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.RequestTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, args...)
+	cmd.Stdin = strings.NewReader(text)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("could not copy JSON; configure tools.clipboard_write")
+	}
+	return nil
+}
+
 func Open(ctx context.Context, c config.Config, raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && u.Scheme != "http") {

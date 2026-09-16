@@ -2,6 +2,13 @@
 
 ## 0.2.0 — in progress
 
+- Add runnable gh and Jenkins curl request copying, preserving API sources and credential environment references.
+
+- Group footer shortcuts and size table columns to the terminal, with branch/title columns on wider screens.
+- Add expandable PR metadata, full wrapped PR/CI URLs, and check selection with detail scrolling.
+- Surface missing/invalid CI URLs and failed detail lookups with a left-hand warning icon and explanation.
+- Add selected-PR and filtered-table JSON clipboard exports, freshness timestamps, and configurable clipboard writers.
+
 - Use standard long options and short aliases, including options after PR references.
 - Add `--no-color` and configurable styling, with progress and overdue colors.
 

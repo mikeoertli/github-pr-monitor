@@ -73,8 +73,9 @@ func Clean(s string) string {
 }
 
 type Job struct {
-	Key                         string // Stable logical job identity, across reruns.
-	RunID                       string // Distinct observed run identity; status changes do not increment it.
+	JenkinsRequests             []string `json:",omitempty"` // API sources for this snapshot; never credentials.
+	Key                         string   // Stable logical job identity, across reruns.
+	RunID                       string   // Distinct observed run identity; status changes do not increment it.
 	Name, Provider, URL, Number string
 	Status, Phase               string
 	Progress                    float64 // -1 = unknown; estimates never reach 1 until terminal.
@@ -97,7 +98,48 @@ func Terminal(s string) bool {
 }
 func Passing(s string) bool { return s == "passed" || s == "skipped" || s == "neutral" }
 
+// BuildURLWarning checks links without probing arbitrary third-party websites.
+func BuildURLWarning(raw string) string {
+	if raw == "" {
+		return "CI did not report a build URL"
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return "CI reported an invalid HTTP(S) build URL"
+	}
+	return ""
+}
+
+func (p PR) Warnings() []string {
+	var warnings []string
+	if p.Error != "" {
+		warnings = append(warnings, p.Error)
+	}
+	for _, j := range p.Jobs {
+		issue := j.Warning
+		if issue == "" {
+			issue = BuildURLWarning(j.URL)
+		}
+		if issue != "" {
+			warnings = append(warnings, j.Name+": "+issue)
+		}
+	}
+	return warnings
+}
+
+// PRDetails describes the latest GitHub metadata for the monitored head.
+type PRDetails struct {
+	Branch, BaseBranch, Author                            string
+	Draft                                                 bool
+	ReviewDecision, Mergeable                             string
+	Additions, Deletions, ChangedFiles, Commits, Comments int
+	CreatedAt, UpdatedAt                                  time.Time
+}
+
 type PR struct {
+	GitHubRequests     [][]string `json:",omitempty"` // Exact gh API arguments for the most recent update.
+	Details            PRDetails
+	LastAttempt        time.Time
 	Ref                Ref
 	Title, Head, State string
 	Jobs               []Job
@@ -115,6 +157,10 @@ func NewPR(ref Ref, now time.Time) PR {
 	return PR{Ref: ref, State: "UNKNOWN", FirstSeen: now, History: map[string]Job{}}
 }
 func (p *PR) Apply(next PR, now time.Time) {
+	p.LastAttempt = now
+	if len(next.GitHubRequests) > 0 {
+		p.GitHubRequests = next.GitHubRequests
+	}
 	if next.Error != "" {
 		p.Error = next.Error
 		p.Fresh = false
@@ -140,6 +186,7 @@ func (p *PR) Apply(next PR, now time.Time) {
 		}
 	}
 	p.Title, p.Head, p.State, p.Jobs = next.Title, next.Head, next.State, next.Jobs
+	p.Details = next.Details
 	p.Error = ""
 	p.Fresh = true
 	p.LastSuccess = now
@@ -279,7 +326,7 @@ func Sorted(prs []PR, filter, by string, desc bool) []int {
 		if p.Removed {
 			continue
 		}
-		fields := []string{p.Ref.Repo, fmt.Sprintf("#%d", p.Ref.Number), p.Title, p.State, p.Status()}
+		fields := []string{p.Ref.Repo, fmt.Sprintf("#%d", p.Ref.Number), p.Title, p.State, p.Status(), p.Details.Branch, p.Details.BaseBranch, p.Details.Author}
 		for _, j := range p.Jobs {
 			fields = append(fields, j.Name, j.Provider, j.Phase)
 		}

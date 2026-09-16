@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,48 @@ func graph(head, state string, nodes []map[string]any, more bool, cursor string)
 }
 func check(id, name, status string) map[string]any {
 	return map[string]any{"__typename": "CheckRun", "id": id, "name": name, "status": status, "conclusion": "SUCCESS", "startedAt": "2026-09-16T12:00:00Z", "checkSuite": map[string]any{"app": map[string]any{"name": "Example CI", "slug": "example"}}}
+}
+
+func TestPRMetadataAndURLWarnings(t *testing.T) {
+	g := New(config.Defaults())
+	ref, _ := core.ParseRef("acme/api#1", "github.com")
+	nodes := []map[string]any{check("1", "missing link", "QUEUED"), check("2", "invalid link", "COMPLETED")}
+	nodes[1]["detailsUrl"] = "file:///tmp/build"
+	var raw map[string]any
+	json.Unmarshal(graph("abc", "OPEN", nodes, false, ""), &raw)
+	pr := raw["data"].(map[string]any)["repository"].(map[string]any)["pullRequest"].(map[string]any)
+	for k, v := range map[string]any{"headRefName": "feature/new", "baseRefName": "main", "author": map[string]any{"login": "alice"}, "isDraft": true, "reviewDecision": "CHANGES_REQUESTED", "mergeable": "CONFLICTING", "additions": 42, "deletions": 7, "changedFiles": 3, "comments": map[string]any{"totalCount": 5}} {
+		pr[k] = v
+	}
+	pr["commits"].(map[string]any)["totalCount"] = 4
+	b, _ := json.Marshal(raw)
+	g.Runner = runnerFunc(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		for _, field := range []string{"headRefName", "baseRefName", "reviewDecision", "changedFiles", "totalCount"} {
+			if !strings.Contains(strings.Join(args, " "), field) {
+				t.Fatalf("query missing %s", field)
+			}
+		}
+		return b, nil
+	})
+	p := core.NewPR(ref, time.Now())
+	p.Apply(g.Fetch(context.Background(), ref), time.Now())
+	d := p.Details
+	if d.Branch != "feature/new" || d.BaseBranch != "main" || d.Author != "alice" || !d.Draft || d.Additions != 42 || d.Commits != 4 || d.Comments != 5 || d.ReviewDecision != "CHANGES_REQUESTED" {
+		t.Fatalf("metadata lost: %+v", d)
+	}
+	if len(p.Warnings()) != 2 || !strings.Contains(p.Jobs[0].Warning, "did not report") || !strings.Contains(p.Jobs[1].Warning, "invalid") {
+		t.Fatalf("warnings lost: %+v", p.Jobs)
+	}
+	if got := core.Sorted([]core.PR{p}, "feature/new", "repo", false); len(got) != 1 {
+		t.Fatal("branch filtering failed")
+	}
+	p.Apply(core.PR{Error: "offline"}, time.Now())
+	if p.Details != d {
+		t.Fatal("failed refresh discarded metadata")
+	}
+	if warnings := (core.PR{}).Warnings(); len(warnings) != 0 {
+		t.Fatal("PR without CI generated a CI warning")
+	}
 }
 func TestGitHubPaginationAndHeadChange(t *testing.T) {
 	g := New(config.Defaults())
@@ -118,6 +161,9 @@ func TestActionsStepsAndRunIdentity(t *testing.T) {
 	})
 	p := g.Fetch(context.Background(), ref)
 	j := p.Jobs[0]
+	if len(p.GitHubRequests) != 3 || !strings.Contains(strings.Join(p.GitHubRequests[1], " "), "/jobs/456") || !strings.Contains(strings.Join(p.GitHubRequests[2], " "), "/runs/123") {
+		t.Fatal("Actions source requests not recorded")
+	}
 	if j.Number != "42.2" || j.Progress != .5 || j.Phase != "Unit tests" || j.Name != "CI / test" || j.RunID != "stable-node-id" {
 		t.Fatalf("%+v", j)
 	}
@@ -168,8 +214,14 @@ func TestJenkinsEstimateStageAndCredentialScope(t *testing.T) {
 	if got.Stale || got.Warning != "" || !got.Estimated || got.Progress < .29 || got.Progress > .31 || got.Phase != "Tests + Lint" || got.Number != "42" {
 		t.Fatalf("%+v", got)
 	}
+	if len(got.JenkinsRequests) != 3 {
+		t.Fatal("missing Jenkins source requests")
+	}
 	before := calls
-	j.Enrich(context.Background(), job)
+	cached := j.Enrich(context.Background(), job)
+	if !reflect.DeepEqual(cached.JenkinsRequests, got.JenkinsRequests) {
+		t.Fatal("cached estimate source missing from copied requests")
+	}
 	if calls-before != 2 {
 		t.Fatal("estimate not cached per build")
 	}
@@ -190,6 +242,9 @@ func TestJenkinsSupersededAndOptionalStages(t *testing.T) {
 		return response(200, `{"number":2,"building":false,"result":"SUCCESS","duration":12000,"timestamp":1000}`), nil
 	})
 	got := j.Enrich(context.Background(), core.Job{URL: "https://ci.example.com/job/api/1/", Provider: "Jenkins"})
+	if len(got.JenkinsRequests) != 3 || !strings.Contains(got.JenkinsRequests[1], "/2/api/json") {
+		t.Fatal("superseding request not recorded")
+	}
 	if got.Number != "2" || got.Status != "passed" || got.Warning != "" || got.Progress != 1 || got.Duration != 12*time.Second {
 		t.Fatal(got)
 	}

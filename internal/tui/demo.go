@@ -44,7 +44,11 @@ func DemoSnapshots(refs []core.Ref, step int) []core.PR {
 			job.Phase = "Integration tests · +1m0s over estimate"
 			title = "Validate service startup"
 		}
-		prs = append(prs, core.PR{Ref: ref, Title: title, Head: fmt.Sprintf("demo-%d", i), State: state, Jobs: []core.Job{job}})
+		details := core.PRDetails{Branch: fmt.Sprintf("feature/improvement-%d", ref.Number), BaseBranch: "main", Author: "demo-user", ReviewDecision: "APPROVED", Mergeable: "MERGEABLE", Additions: 142, Deletions: 38, ChangedFiles: 7, Commits: 3, Comments: 4, CreatedAt: time.Now().Add(-24 * time.Hour), UpdatedAt: time.Now().Add(-5 * time.Minute)}
+		if i%5 == 4 {
+			job.Warning = "Jenkins pipeline stages unavailable (HTTP 403); using build status"
+		}
+		prs = append(prs, core.PR{Ref: ref, Title: title, Head: fmt.Sprintf("demo-%d", i), State: state, Details: details, Jobs: []core.Job{job}})
 	}
 	return prs
 }

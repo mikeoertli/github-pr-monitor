@@ -14,11 +14,13 @@ import (
 )
 
 type Tools struct {
-	GH            string   `toml:"gh"`
-	Clipboard     string   `toml:"clipboard"`
-	ClipboardArgs []string `toml:"clipboard_args"`
-	Open          string   `toml:"open"`
-	OpenArgs      []string `toml:"open_args"`
+	ClipboardWrite     string   `toml:"clipboard_write"`
+	ClipboardWriteArgs []string `toml:"clipboard_write_args"`
+	GH                 string   `toml:"gh"`
+	Clipboard          string   `toml:"clipboard"`
+	ClipboardArgs      []string `toml:"clipboard_args"`
+	Open               string   `toml:"open"`
+	OpenArgs           []string `toml:"open_args"`
 }
 
 type Jenkins struct {

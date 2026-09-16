@@ -49,8 +49,10 @@ func (g *GitHub) run(ctx context.Context, args ...string) ([]byte, error) {
 
 const query = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
  repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
-  title state headRefOid mergedAt
-  commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:100,after:$cursor) {
+  title state headRefOid mergedAt headRefName baseRefName author { login }
+  isDraft reviewDecision mergeable additions deletions changedFiles createdAt updatedAt
+  comments { totalCount }
+  commits(last:1) { totalCount nodes { commit { statusCheckRollup { contexts(first:100,after:$cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
     __typename
@@ -79,10 +81,17 @@ type contexts struct {
 	}
 }
 type gqlPR struct {
-	Title, State, HeadRefOID string
-	MergedAt                 time.Time
-	Commits                  struct {
-		Nodes []struct {
+	Title, State, HeadRefOID                            string
+	MergedAt                                            time.Time
+	HeadRefName, BaseRefName, ReviewDecision, Mergeable string
+	Author                                              struct{ Login string }
+	IsDraft                                             bool
+	Additions, Deletions, ChangedFiles                  int
+	CreatedAt, UpdatedAt                                time.Time
+	Comments                                            struct{ TotalCount int }
+	Commits                                             struct {
+		TotalCount int
+		Nodes      []struct {
 			Commit struct{ StatusCheckRollup *struct{ Contexts contexts } }
 		}
 	}
@@ -90,18 +99,19 @@ type gqlPR struct {
 
 func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 	p := core.PR{Ref: ref}
+	// Each fetch gets its own recorder, including Actions detail calls. No credentials
+	// are in gh arguments: authentication remains managed by gh.
+	traced := *g
+	traced.Runner = requestRecorder{Runner: g.Runner, requests: &p.GitHubRequests}
+	g = &traced
 	cursor := ""
 	var nodes []checkNode
-	parts := strings.Split(ref.Repo, "/")
 	for page := 0; ; page++ {
 		if page >= 100 {
 			p.Error = "too many pages of checks"
 			return p
 		}
-		args := []string{"api", "graphql", "--hostname", ref.Host, "-f", "query=" + query, "-f", "owner=" + parts[0], "-f", "repo=" + parts[1], "-F", "number=" + strconv.Itoa(ref.Number)}
-		if cursor != "" {
-			args = append(args, "-f", "cursor="+cursor)
-		}
+		args := githubArgs(ref, cursor)
 		b, err := g.run(ctx, args...)
 		if err != nil {
 			p.Error = err.Error()
@@ -129,6 +139,12 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 			return p
 		}
 		p.Title, p.State, p.Head = core.Clean(raw.Title), raw.State, raw.HeadRefOID
+		p.Details = core.PRDetails{
+			Branch: core.Clean(raw.HeadRefName), BaseBranch: core.Clean(raw.BaseRefName), Author: core.Clean(raw.Author.Login),
+			Draft: raw.IsDraft, ReviewDecision: raw.ReviewDecision, Mergeable: raw.Mergeable,
+			Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles,
+			Commits: raw.Commits.TotalCount, Comments: raw.Comments.TotalCount, CreatedAt: raw.CreatedAt, UpdatedAt: raw.UpdatedAt,
+		}
 		if len(raw.Commits.Nodes) == 0 || raw.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
 			break
 		}
@@ -195,7 +211,9 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 	for _, key := range order {
 		n := latest[key]
 		j := jobFromNode(n, p.Head)
-		if g.Jenkins.Match(j) {
+		if issue := core.BuildURLWarning(j.URL); issue != "" {
+			j.Warning = issue
+		} else if g.Jenkins.Match(j) {
 			j.Provider = "Jenkins"
 			// Multiple GitHub contexts may report the same Jenkins build.
 			if jenkinsSeen[j.URL] {

@@ -68,6 +68,207 @@ func primaryJob(p core.PR) *core.Job {
 	}
 	return nil
 }
+
+// footer separates actions into labeled groups and keeps keycaps readable without color.
+func (m *Model) footer() []string {
+	if m.mode != "" {
+		return []string{m.paint(accent, m.mode+" › ") + m.input.View(), "[Enter] Apply   ·   [Esc] Cancel"}
+	}
+	if m.width < 80 {
+		return []string{"[Enter] Details  ·  [o] PR  ·  [b] CI", "[c/C] Commands  ·  [?] Keys  ·  [q] Quit"}
+	}
+	groups := [][]string{
+		{"PRs", "[v] Paste", "[a] Add", "[d] Discover", "[/] Filter", "[s] Sort", "[r] Reverse"},
+		{"Inspect", "[Enter] Details", "[Tab] Check", "[o] Open PR", "[b] Open CI"},
+		{"Copy", "[y] PR JSON", "[Y] Table JSON", "[c] gh command", "[C] Jenkins curl"},
+		{"Watch", "[↑↓] Select", "[ / ] Scroll details", "[p] Pause", "[R] Refresh", "[?] Help", "[q] Quit"},
+	}
+	var lines []string
+	for _, group := range groups {
+		line := cell(group[0], 8)
+		for _, hint := range group[1:] {
+			if ansi.StringWidth(line)+len(hint)+5 > m.width {
+				lines = append(lines, line)
+				line = strings.Repeat(" ", 8)
+			}
+			if strings.TrimSpace(line) != "" && ansi.StringWidth(line) > 8 {
+				line += "  │  "
+			}
+			line += hint
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+type column struct {
+	name  string
+	width int
+}
+
+func (m *Model) columns() []column {
+	w := max(20, m.width)
+	cols := []column{{"REPOSITORY / PR", max(8, w/4)}, {"PROGRESS", 17}, {"STATUS", 10}}
+	if w < 70 {
+		return []column{{"REPO / PR", max(8, w-36)}, {"PROGRESS", 17}, {"STATUS", 8}}
+	}
+	if w >= 85 {
+		cols = append(cols, column{"BUILD", 8})
+	}
+	if m.showCI() && w >= 110 {
+		cols = append(cols, column{"CI", 14})
+	}
+	if w >= 140 {
+		cols = append(cols, column{"BRANCH", max(18, w/7)})
+	}
+	if w >= 190 {
+		cols = append(cols, column{"TITLE", w / 5})
+	}
+	used := 6
+	for _, col := range cols {
+		used += col.width + 2
+	}
+	if w-used >= 12 {
+		cols = append(cols, column{"PHASE / WARNING", w - used})
+	} else {
+		cols[0].width += max(0, w-used+2)
+	}
+	return cols
+}
+func (m *Model) tableRow(p core.PR, selected bool, cols []column) string {
+	build, phase := "—", "Waiting for checks"
+	if j := primaryJob(p); j != nil {
+		build, phase = value(j.Number), j.Phase
+	}
+	estimated := false
+	for _, j := range p.Jobs {
+		estimated = estimated || j.Estimated
+	}
+	status := p.Status()
+	if p.State == "MERGED" || p.State == "CLOSED" {
+		status = strings.ToLower(p.State)
+	}
+	color := muted
+	switch status {
+	case "passed", "merged":
+		color = good
+	case "failed", "stale":
+		color = bad
+	case "building":
+		color = warn
+	}
+	if !p.Fresh && p.Error == "" {
+		status = "loading"
+	}
+	marker, fold, issue := "  ", "▸ ", "  "
+	if selected {
+		marker = "› "
+	}
+	if m.expanded[p.Ref.URL] {
+		fold = "▾ "
+	}
+	if warnings := p.Warnings(); len(warnings) > 0 {
+		issue = m.paint(warn, "⚠ ")
+		phase = warnings[0]
+	}
+	line := marker + issue + fold
+	for i, col := range cols {
+		if i > 0 {
+			line += "  "
+		}
+		v := ""
+		switch col.name {
+		case "REPOSITORY / PR", "REPO / PR":
+			v = fmt.Sprintf("%s #%d", p.Ref.Repo, p.Ref.Number)
+		case "PROGRESS":
+			v = m.bar(p, estimated, time.Now())
+		case "STATUS":
+			v = m.paint(color, status)
+		case "BUILD":
+			v = build
+		case "CI":
+			v = providers(p)
+		case "BRANCH":
+			v = value(p.Details.Branch)
+		case "TITLE":
+			v = p.Title
+		case "PHASE / WARNING":
+			v = core.Clean(phase)
+		}
+		line += cell(v, col.width)
+	}
+	line = cell(line, max(1, m.width))
+	if selected && !m.noColor() {
+		line = lipgloss.NewStyle().Reverse(true).Render(line)
+	}
+	return line
+}
+func value(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return core.Clean(s)
+}
+func stamp(t time.Time) string {
+	if t.IsZero() {
+		return "—"
+	}
+	return t.Local().Format("2006-01-02 15:04:05 MST")
+}
+
+func (m *Model) details(p core.PR, selected bool) []string {
+	var lines []string
+	add := func(text string) {
+		// Hard wrapping also preserves every character of long build URLs.
+		for _, part := range strings.Split(ansi.Hardwrap(core.Clean(text), max(1, m.width-8), true), "\n") {
+			lines = append(lines, "      │ "+part)
+		}
+	}
+	d := p.Details
+	add(p.Title)
+	add(fmt.Sprintf("Branch: %s → %s  ·  Author: %s  ·  Draft: %t", value(d.Branch), value(d.BaseBranch), value(d.Author), d.Draft))
+	add(fmt.Sprintf("Changes: +%d −%d · %d files · %d commits · %d comments", d.Additions, d.Deletions, d.ChangedFiles, d.Commits, d.Comments))
+	add(fmt.Sprintf("Review: %s · Mergeable: %s · State: %s", value(d.ReviewDecision), value(d.Mergeable), p.FinalStatus()))
+	add("Created: " + stamp(d.CreatedAt) + " · Updated: " + stamp(d.UpdatedAt))
+	add("Head: " + value(p.Head) + " · Last refresh: " + stamp(p.LastSuccess))
+	add("PR URL: " + p.Ref.URL)
+	for _, issue := range p.Warnings() {
+		add("⚠ " + issue)
+	}
+	if len(p.Jobs) == 0 {
+		add("No CI checks reported yet.")
+		return lines
+	}
+	jobIndex := 0
+	if selected {
+		m.selectedJob(p)
+		jobIndex = m.jobCursor
+	}
+	job := p.Jobs[jobIndex]
+	passed, finished := 0, 0
+	for _, j := range p.Jobs {
+		if core.Terminal(j.Status) {
+			finished++
+		}
+		if core.Passing(j.Status) {
+			passed++
+		}
+	}
+	add(fmt.Sprintf("Checks: %d passing · %d finished / %d total · [Tab/Shift+Tab] choose check", passed, finished, len(p.Jobs)))
+	add(fmt.Sprintf("Check %d/%d: %s · %s · #%s · %s", jobIndex+1, len(p.Jobs), job.Provider, job.Name, value(job.Number), job.Status))
+	elapsed := job.Duration
+	if !core.Terminal(job.Status) && !job.StartedAt.IsZero() {
+		elapsed = time.Since(job.StartedAt)
+	}
+	expected := "—"
+	if job.ExpectedDuration > 0 {
+		expected = core.Duration(job.ExpectedDuration)
+	}
+	add(fmt.Sprintf("Phase: %s · Elapsed: %s · Expected: %s", job.Phase, core.Duration(elapsed), expected))
+	add("CI URL: " + value(job.URL))
+	return lines
+}
+
 func (m *Model) View() (view string) {
 	if m.noColor() {
 		defer func() { view = ansi.Strip(view) }()
@@ -75,8 +276,8 @@ func (m *Model) View() (view string) {
 	if m.help {
 		return m.helpView()
 	}
-	width := max(20, m.width)
-	lines := []string{}
+	width := max(1, m.width)
+	var lines []string
 	add := func(s string) { lines = append(lines, ansi.Truncate(s, width, "…")) }
 	state := "●"
 	if m.busy {
@@ -94,184 +295,132 @@ func (m *Model) View() (view string) {
 		dir = "↓"
 	}
 	add(m.paint(accent, state+" gprm") + m.paint(muted, fmt.Sprintf("%s  ·  every %s  ·  sort %s%s  ·  quit %s", demo, m.Config.Interval, m.Config.Sort, dir, m.Config.AutoQuit)))
-	count, passed, running, stale := 0, 0, 0, 0
+	count, passed, running, warnings := 0, 0, 0, 0
 	for _, p := range m.PRs {
 		if p.Removed {
 			continue
 		}
 		count++
-		switch p.Status() {
-		case "passed":
+		if p.Status() == "passed" {
 			passed++
-		case "building":
+		}
+		if p.Status() == "building" {
 			running++
-		case "stale":
-			stale++
+		}
+		if len(p.Warnings()) > 0 {
+			warnings++
 		}
 	}
 	filter := ""
 	if m.filter != "" {
 		filter = fmt.Sprintf(" · filter %q", core.Clean(m.filter))
 	}
-	add(m.paint(muted, fmt.Sprintf("%d PRs  ·  %d building  ·  %d passing  ·  %d stale%s", count, running, passed, stale, filter)))
+	add(m.paint(muted, fmt.Sprintf("%d PRs  ·  %d building  ·  %d passing  ·  %d warnings%s", count, running, passed, warnings, filter)))
 	add("")
-	ci := m.showCI() && width >= 110
-	repoWidth := max(18, min(34, width/4))
-	phaseWidth := max(10, width-repoWidth-55)
-	if ci {
-		phaseWidth -= 17
-	}
-	header := "  " + cell("REPOSITORY / PR", repoWidth) + "  " + cell("PROGRESS", 17) + "  " + cell("BUILD", 10) + "  " + cell("STATUS", 14)
-	if ci {
-		header += "  " + cell("CI", 15)
-	}
-	if width >= 85 {
-		header += "  PHASE"
+	cols := m.columns()
+	header := "      "
+	for i, col := range cols {
+		if i > 0 {
+			header += "  "
+		}
+		header += cell(col.name, col.width)
 	}
 	add(m.paint(muted, header))
 	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
 	m.cursor = max(0, min(m.cursor, len(rows)-1))
-	start := max(0, m.cursor-m.visible()+1)
-	end := min(len(rows), start+m.visible())
-	if len(rows) == 0 {
+	var body []string
+	focus := 0
+	for pos, i := range rows {
+		p := m.PRs[i]
+		selected := pos == m.cursor
+		if selected {
+			focus = len(body)
+		}
+		body = append(body, m.tableRow(p, selected, cols))
+		if m.expanded[p.Ref.URL] {
+			detail := m.details(p, selected)
+			if selected {
+				m.detailScroll = min(m.detailScroll, len(detail))
+				focus += m.detailScroll
+			}
+			body = append(body, detail...)
+		}
+	}
+	if len(body) == 0 {
+		body = []string{"  Paste PRs with [v], add with [a], or discover with [d]."}
 		if m.filter != "" {
-			add("  No matches. Esc clears the filter.")
+			body[0] = "  No matches. [Esc] clears the filter."
+		}
+	}
+	height := m.visible()
+	m.scroll = max(0, min(m.scroll, max(0, len(body)-height)))
+	if focus < m.scroll {
+		m.scroll = focus
+	}
+	if focus >= m.scroll+height {
+		m.scroll = focus - height + 1
+	}
+	for n := 0; n < height; n++ {
+		if i := m.scroll + n; i < len(body) {
+			add(body[i])
 		} else {
-			add("  Paste PRs with v, add with a, or discover your open PRs with d.")
+			add("")
 		}
-	}
-	for pos := start; pos < end; pos++ {
-		p := m.PRs[rows[pos]]
-		build, phase := "—", "Waiting for checks"
-		estimated := false
-		if j := primaryJob(p); j != nil {
-			build = j.Number
-			if build == "" {
-				build = "—"
-			}
-			phase = j.Phase
-		}
-		for _, j := range p.Jobs {
-			if j.Estimated {
-				estimated = true
-			}
-		}
-		status := p.Status()
-		if p.State == "MERGED" || p.State == "CLOSED" {
-			status = strings.ToLower(p.State)
-		}
-		color := muted
-		switch status {
-		case "passed", "merged":
-			color = good
-		case "failed", "stale":
-			color = bad
-		case "building":
-			color = warn
-		}
-		if !p.Fresh && p.Error == "" {
-			status = "loading"
-		}
-		line := "  " + cell(fmt.Sprintf("%s #%d", core.Clean(p.Ref.Repo), p.Ref.Number), repoWidth) + "  " + cell(m.bar(p, estimated, time.Now()), 17) + "  " + cell(core.Clean(build), 10) + "  " + m.paint(color, cell(status, 14))
-		if ci {
-			line += "  " + cell(providers(p), 15)
-		}
-		if width >= 85 {
-			line += "  " + cell(phase, phaseWidth)
-		}
-		line = ansi.Truncate(line, width, "…")
-		if pos == m.cursor {
-			if m.noColor() {
-				line = "› " + strings.TrimPrefix(line, "  ")
-			} else {
-				line = lipgloss.NewStyle().Reverse(true).Render(line)
-			}
-		}
-		add(line)
-	}
-	used := end - start
-	if len(rows) == 0 {
-		used = 1
-	}
-	for i := used; i < m.visible(); i++ {
-		add("")
 	}
 	add(m.paint(muted, strings.Repeat("─", width)))
 	if i := m.selected(); i >= 0 {
 		p := m.PRs[i]
-		add(m.paint(accent, core.Clean(p.Title)) + m.paint(muted, " · "+p.FinalStatus()))
+		label := fmt.Sprintf("%s #%d · %s", p.Ref.Repo, p.Ref.Number, p.Title)
 		if job := m.selectedJob(p); job != nil {
-			label := fmt.Sprintf("[%d/%d] %s · %s · %s", m.jobCursor+1, len(p.Jobs), job.Provider, job.Name, job.Phase)
-			if job.Number != "" {
-				label += " · #" + job.Number
-			}
-			if !job.StartedAt.IsZero() {
-				d := job.Duration
-				if !core.Terminal(job.Status) {
-					d = time.Since(job.StartedAt)
-				}
-				label += " · " + core.Duration(d)
-			}
-			add(core.Clean(label))
-			detail := job.URL
-			if job.Warning != "" {
-				detail = job.Warning
-			}
-			if p.Error != "" {
-				detail = p.Error
-			}
-			add(m.paint(muted, core.Clean(detail)))
+			label = fmt.Sprintf("Check %d/%d · %s · %s · %s", m.jobCursor+1, len(p.Jobs), job.Provider, job.Name, job.Phase)
+		}
+		add(m.paint(accent, core.Clean(label)))
+		if issues := p.Warnings(); len(issues) > 0 {
+			add(m.paint(warn, "⚠ "+core.Clean(strings.Join(issues, " · "))))
 		} else {
-			add("Waiting for CI checks to be reported by GitHub.")
-			add(m.paint(muted, core.Clean(p.Error)))
+			add(m.paint(muted, "[Enter] Expand/collapse PR details and URLs · [y] Copy this PR · [Y] Copy filtered table"))
 		}
 	} else {
-		add("Clipboard accepts several links, including links copied from a message.")
-		add("Build progress: ~ estimated time · Actions: completed steps · — unknown")
-		add("")
+		add("Clipboard accepts several PR links, including prose.")
+		add("~ estimated time · ! overdue · — unknown progress")
 	}
 	add(m.paint(warn, core.Clean(m.notice)))
-	if m.mode != "" {
-		add(m.paint(accent, m.mode+" › ") + m.input.View())
-	} else {
-		add(m.paint(muted, "v paste  a add  d discover  / filter  s sort  r reverse  o PR  b build  ? help  Q quit"))
+	for _, line := range m.footer() {
+		add(m.paint(muted, line))
 	}
-	// Very short terminals still get the input and key hints.
-	if len(lines) > m.height && m.height > 0 {
+	if m.height > 0 && len(lines) > m.height {
 		lines = append(lines[:max(0, m.height-1)], lines[len(lines)-1])
 	}
 	return strings.Join(lines, "\n")
 }
+
 func (m *Model) helpView() string {
-	text := `gprm · keys
+	text := `gprm · keys                                         [? / Esc] Close
 
-Add PRs       v / Ctrl+V  import clipboard links
-              a          type or paste multiple PR references
-              d          discover your open PRs
-Navigate      ↑/k ↓/j    select PR
-              PgUp/PgDn  page through PRs
-              g / G      first / last PR
-              Tab / ↵    next check; Shift+Tab previous check
-Arrange       /          fuzzy filter; Esc clears
-              s          sort by repository / progress
-              r          reverse sort
-Watch         p          pause / resume polling
-              R          refresh now
-              x          remove selected PR from monitoring
-Open          o          selected PR in browser
-              b          selected check's build in browser
-Other         ? / Esc    close help
-              Q / Ctrl+C quit and print summary
+Add       [v / Ctrl+V] Clipboard   [a] Add PRs   [d] Discover
+Navigate  [↑/k ↓/j] Select PR      [PgUp/PgDn] Page   [g/G] First/last
+Details   [Enter / Space] Toggle  [→/←] Expand/collapse
+          [Tab / Shift+Tab] Next/previous CI check
+          [ / ] Scroll through expanded details (including long URLs)
+Open      [o] GitHub PR           [b] Selected CI URL
+Copy      [y] Selected PR JSON    [Y] Filtered table JSON
+          [c] gh request command [C] Jenkins curl requests
+Arrange   [/] Fuzzy filter        [Esc] Clear filter
+          [s] Repo/progress sort  [r] Reverse sort
+Watch     [p] Pause/resume        [R] Refresh now
+          [x] Remove selected PR from monitoring
+Quit      [q / Q / Ctrl+C] Quit and print summary
 
-~ is an estimate; ! means overdue; — means unknown.
-Bars: red → orange → yellow → green; overdue orange/red.
---no-color disables styling (also NO_COLOR).
-Other CI checks use status from GitHub. No checks never means passing.
-Auto-quit considers all monitored PRs, including filtered-out rows.
-Startup and auto-quit defaults live in gprm_config.toml; flags override them.`
+⚠ warns about unavailable CI URLs/details or a failed refresh.
+Expand the row to read warnings and full URLs; [ / ] scroll details.
+JSON contains the latest displayed data and freshness/error fields.
+[Y] includes filtered rows outside the viewport, in table order.
+~ estimated progress; ! overdue; — unknown. Red → green → orange/red.
+--no-color (or NO_COLOR) disables styling.
+Auto-quit considers all monitored PRs, including filtered-out rows.`
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
-		lines = append(lines, ansi.Truncate(line, max(20, m.width), "…"))
+		lines = append(lines, ansi.Truncate(line, max(1, m.width), "…"))
 	}
 	if m.height > 0 && len(lines) > m.height {
 		lines = lines[:m.height]

@@ -4,14 +4,16 @@ A keyboard-driven GitHub PR and build dashboard, styled after [kube-resource-mon
 
 - Jenkins build numbers, elapsed-time estimates, active pipeline stages, and superseding builds.
 - GitHub Actions run numbers, attempts, and active steps. Other CI providers work through GitHub check runs and commit statuses.
-- Fuzzy filtering, repository/progress sorting, browser shortcuts, and automatic session restoration.
+- Fuzzy filtering (including branches and authors), repository/progress sorting, browser shortcuts, and automatic session restoration.
+- Expandable PR rows with branch, review, change counts, timestamps, and full PR/CI URLs.
+- Visible CI warnings and clipboard export of the selected PR or filtered table as JSON.
 - Configurable startup and exit behavior; no-check and stale snapshots never count as passing.
 - Mixed-provider sessions automatically show a CI column on wide terminals.
 - An offline demo that never touches your saved session or calls GitHub/Jenkins.
 
 ## Build and install
 
-Requires Go 1.24.2 or later to build, and an installed, authenticated [GitHub CLI](https://cli.github.com/) for live monitoring. Jenkins uses Go's HTTP client; neither curl nor jq is needed.
+Requires Go 1.24.2 or later to build, and an installed, authenticated [GitHub CLI](https://cli.github.com/) for live monitoring. Jenkins uses Go's HTTP client; neither curl nor jq is needed for monitoring. Running a copied Jenkins request requires `curl` on your terminal's `PATH`.
 
 ```sh
 gh auth login
@@ -138,6 +140,8 @@ discovery_limit = 100
 gh = "gh"                 # executable name or absolute path
 clipboard = ""            # automatic platform default
 clipboard_args = []
+clipboard_write = ""      # automatic platform default; receives JSON on stdin
+clipboard_write_args = []
 open = ""                 # automatic platform default
 open_args = []
 
@@ -151,7 +155,7 @@ token_env = "JENKINS_API_TOKEN"
 
 Repeat `[[jenkins]]` for more servers. The environment variables named by `user_env` and `token_env` override inline values when nonempty. Credentials are sent only to the configured origin and path prefix. Cross-origin redirects are refused. Use the actual Jenkins server root, including any context path such as `/jenkins`.
 
-Paths and arguments are separate: `clipboard = "/path with spaces/helper"` works; `clipboard = "helper --flag"` does not. Commands are executed directly, without a shell. Defaults are `pbpaste`/`open` on macOS, `wl-paste` or `xclip`/`xsel` and `xdg-open` on Linux, and PowerShell clipboard/rundll32 on Windows. Windows integrations are implemented but have not been tested on Windows. Manual paste into the `a` input works when no clipboard helper is available.
+Paths and arguments are separate: `clipboard = "/path with spaces/helper"` works; `clipboard = "helper --flag"` does not. Commands are executed directly, without a shell. Defaults are `pbpaste`/`pbcopy`/`open` on macOS, `wl-paste`/`wl-copy` or `xclip`/`xsel` and `xdg-open` on Linux, and PowerShell clipboard/rundll32 on Windows. Configure `clipboard_write` and `clipboard_write_args` separately from the clipboard reader; exported JSON is passed unchanged through stdin. For example, X11 copying uses `clipboard_write = "xclip"` with `clipboard_write_args = ["-selection", "clipboard", "-in"]`. Windows integrations are implemented but have not been tested on Windows. Manual paste into the `a` input works when no clipboard helper is available.
 
 CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `--sort` (`-s`), `--gh`, and `--no-color`. Use `--config` (`-c`) to select settings, `--help` (`-h`) for usage, and `--version` (`-V`) for the version. Single-dash long spellings such as `-help` are not accepted. Overrides affect the current run and do not rewrite your settings. Demo mode uses built-in defaults and CLI overrides; it ignores the config file.
 
@@ -177,7 +181,11 @@ The full monitored list is used, even while filtered. An empty list never auto-q
 | `d` | Add your open PRs |
 | `↑` / `k`, `↓` / `j` | Select a PR |
 | `PgUp`, `PgDn`, `g`, `G` | Page or jump to the first/last PR |
-| `Tab` / `Enter`, `Shift+Tab` | Next/previous check in the detail pane |
+| `Enter` / `Space`, `→`, `←` | Toggle, expand, or collapse the selected PR's details |
+| `Tab`, `Shift+Tab` | Next/previous CI check in the selected PR |
+| `[`, `]` | Scroll up/down through expanded details and long URLs |
+| `y`, `Y` | Copy selected PR JSON or all PRs in the filtered table |
+| `c`, `C` | Copy gh requests for the selected PR, or curl requests for the selected Jenkins check |
 | `/`, `Esc` | Fuzzy filter; clear filter |
 | `s`, `r` | Switch repository/progress sort; reverse direction |
 | `p`, `R` | Pause/resume; refresh immediately |
@@ -186,7 +194,28 @@ The full monitored list is used, even while filtered. An empty list never auto-q
 | `?` | Show help |
 | `Q` / `q` / `Ctrl+C` | Quit and print the summary |
 
-The table shows the first active check (or the first check when all are finished). The detail pane lets you inspect and open every check. At narrow terminal widths the CI/phase columns are omitted; those details remain in the selected-check pane. `--no-color` disables all color and text styling while keeping a plain selection marker. Set `no_color = true` in the config for this default; `--no-color=false` overrides that setting for one run. The `NO_COLOR` environment variable and `TERM=dumb` also disable styling and take precedence over the flag.
+The footer groups shortcuts under **PRs**, **Inspect**, **Copy**, and **Watch**, with separate keycaps and separators. The table grows with the terminal: branch appears from 140 columns and title from 190 columns, while repository and phase columns use the remaining width. Compact windows prioritize repository, progress, and status; `?` lists every shortcut.
+
+Press `Enter` to expand a PR beneath its table row. Details include source/target branches, author, draft state, review decision, mergeability, additions/deletions, file/commit/conversation-comment counts, timestamps, head commit, PR URL, and CI check details including the CI URL. These fields come from [GitHub's pull request API](https://docs.github.com/en/graphql/reference/pulls#pullrequest). Expansion is retained per PR while sorting and filtering, for the current run. Long text and URLs wrap; use `[` and `]` to scroll when details exceed the available height.
+
+The table shows the first active check (or the first check when all are finished). `Tab` and `Shift+Tab` select a check for the expanded details, bottom summary, and `b` browser shortcut. `o` always opens the selected PR on GitHub. These actions also work with the row collapsed.
+
+A **⚠** on the left flags a reported check with a missing/invalid build URL, a failed CI detail lookup, or a failed PR refresh. The issue appears in the phase/warning column and the selected-row summary; expand the row for all warning messages and full URLs. A PR with no reported checks does not produce a missing-URL warning. Other providers' links are checked for URL validity; their websites are not probed for reachability.
+
+`y` copies a JSON object for the selected PR; `Y` copies an array for the current filtered table in its current sort order, including rows outside the viewport. Clear the filter first to copy all monitored PRs. Both include all current checks and metadata, even when details are collapsed. These are normalized dashboard snapshots, not raw provider responses or historical runs. Freshness, last-attempt/last-success timestamps, warnings, and errors identify retained data after a failed refresh. Timestamps use RFC 3339; job durations are nanoseconds. Configuration and credentials are excluded. Clipboard failures appear in the status line.
+
+ `--no-color` disables all color and text styling while keeping a plain selection marker. Set `no_color = true` in the config for this default; `--no-color=false` overrides that setting for one run. The `NO_COLOR` environment variable and `TERM=dumb` also disable styling and take precedence over the flag.
+
+### Copy runnable requests
+
+The **Copy** menu provides commands ready to paste into Bash, Zsh, or another POSIX shell:
+
+- `c` copies the actual `gh api` requests from the selected PR's most recent update, using your configured `tools.gh` path and GitHub host. This includes the same GraphQL query, each fetched check page with its cursor, and any GitHub Actions job/run detail requests. Authentication stays with `gh`. Before the first update, it copies the initial PR query.
+- `C` copies a block of `curl` requests for the selected Jenkins check. Use `Tab` to choose a different check. It includes the build API, pipeline stages when requested, and the last-successful-build source used for a running build's time estimate, including when that estimate was cached. Superseded-build requests are retained. Non-Jenkins checks and non-build URLs explain why no Jenkins request is available.
+
+Jenkins commands use the same JSON Accept header, request timeout, and first matching server's credential configuration as the monitor. Each endpoint is checked against the server's origin and path before adding credentials. Configured environment variables remain references in the copied text, with nonempty values overriding inline fallbacks when you run it. Inline credentials, if configured, are included in the copied block; environment secret values are not expanded into the clipboard. Local variables live in subshells. Curl's default config file is disabled, and copied requests do not follow redirects because curl cannot enforce the monitor's path-prefix redirect restriction.
+
+These commands retrieve the JSON sources used to render the table, rather than reproducing its calculated display. They make fresh requests: a build can advance, a cached duration can change, and recorded pagination cursors describe the latest monitored update. Jenkins pipeline-stage requests can return 404 when the optional plugin is absent. Use `y`/`Y` for the exact displayed snapshot, including its estimates and stale/error state. Copying commands does not execute them or alter monitoring.
 
 ## CI behavior and progress
 
