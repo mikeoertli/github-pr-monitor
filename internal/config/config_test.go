@@ -6,8 +6,37 @@ import (
 	"testing"
 )
 
+func TestDefaultConfigPathAndTemplate(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	if got, want := Path(), filepath.Join(dir, "gprm", "gprm_config.toml"); got != want {
+		t.Fatalf("config path %q, want %q", got, want)
+	}
+	if err := WriteExample(Path()); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Startup != "restore" || c.AutoQuit != "all-closed" || c.Interval != "5s" || c.Tools.GH != "gh" {
+		t.Fatalf("unexpected shipped defaults: %+v", c)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := Path(), filepath.Join(home, ".config", "gprm", "gprm_config.toml"); got != want {
+		t.Fatalf("home config path %q, want %q", got, want)
+	}
+}
+
 func TestConfigDefaultsAndOverrides(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
+	path := filepath.Join(t.TempDir(), "gprm_config.toml")
 	c, err := Load(path)
 	if err != nil || c.Startup != "restore" || c.AutoQuit != "all-closed" {
 		t.Fatalf("%+v %v", c, err)

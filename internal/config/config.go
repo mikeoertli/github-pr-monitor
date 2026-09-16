@@ -2,6 +2,7 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"net/url"
 	"os"
@@ -43,7 +44,11 @@ type Config struct {
 }
 
 func Defaults() Config {
-	return Config{Startup: "restore", AutoQuit: "all-closed", Interval: "5s", Timeout: "20s", Sort: "repo", CIColumn: "auto", GitHubHost: "github.com", DiscoveryLimit: 100, Tools: Tools{GH: "gh"}}
+	var c Config
+	if _, err := toml.Decode(Example, &c); err != nil {
+		panic(fmt.Sprintf("invalid embedded default config: %v", err))
+	}
+	return c
 }
 
 func Path() string {
@@ -52,7 +57,7 @@ func Path() string {
 		home, _ := os.UserHomeDir()
 		root = filepath.Join(home, ".config")
 	}
-	return filepath.Join(root, "gprm", "config.toml")
+	return filepath.Join(root, "gprm", "gprm_config.toml")
 }
 
 func StatePath() string {
@@ -146,35 +151,7 @@ func WriteExample(path string) error {
 	return closeErr
 }
 
-const Example = `# gprm settings. Command-line flags override these defaults.
-startup = "restore" # restore | clipboard | empty | auto-discover
-auto_quit = "all-closed" # never | builds-finished | all-passing | all-closed
-interval = "5s"
-request_timeout = "20s"
-sort = "repo" # repo | progress
-descending = false
-ci_column = "auto" # auto | always | never
-github_host = "github.com"
-discovery_limit = 100
-
-[tools]
-gh = "gh" # executable name or absolute path
-# Empty clipboard/open paths select the platform default.
-clipboard = ""
-clipboard_args = []
-open = ""
-open_args = []
-# macOS: clipboard = "/usr/bin/pbpaste", open = "/usr/bin/open"
-# Wayland: clipboard = "wl-paste", clipboard_args = ["--no-newline"]
-# X11: clipboard = "xclip", clipboard_args = ["-selection", "clipboard", "-o"]
-
-# Add an entry for each Jenkins server. Credentials are sent only to its
-# exact origin and URL path prefix. Cross-origin redirects are rejected.
-# Environment values override inline credentials when set.
-# [[jenkins]]
-# url = "https://ci.example.com/jenkins"
-# user = ""
-# token = ""
-# user_env = "JENKINS_USER"
-# token_env = "JENKINS_API_TOKEN"
-`
+// Example contains the documented defaults used for both loading and initialization.
+//
+//go:embed defaults.toml
+var Example string

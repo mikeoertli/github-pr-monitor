@@ -16,13 +16,12 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	project "github.com/mikeoertli/github-pr-monitor"
 	"github.com/mikeoertli/github-pr-monitor/internal/config"
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
 	"github.com/mikeoertli/github-pr-monitor/internal/provider"
 	"github.com/mikeoertli/github-pr-monitor/internal/tui"
 )
-
-var Version = "dev"
 
 func Run(args []string, out, stderr io.Writer) error {
 	flags := flag.NewFlagSet("gprm", flag.ContinueOnError)
@@ -53,7 +52,7 @@ func Run(args []string, out, stderr io.Writer) error {
 		return err
 	}
 	if *version {
-		fmt.Fprintln(out, "gprm "+Version)
+		fmt.Fprintln(out, "gprm "+project.Version())
 		return nil
 	}
 	if *initConfig {

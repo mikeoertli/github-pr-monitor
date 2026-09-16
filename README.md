@@ -112,13 +112,15 @@ Discovery uses your authenticated GitHub account and searches for authored, open
 
 ## Configuration
 
-On the first live run, gprm creates `~/.config/gprm/config.toml` with documented defaults and permissions `0600`. `$XDG_CONFIG_HOME/gprm/config.toml` is used when set. Create it ahead of time with:
+On the first live run, gprm creates `~/.config/gprm/gprm_config.toml` with documented defaults and permissions `0600`. `$XDG_CONFIG_HOME/gprm/gprm_config.toml` is used when set. Create it ahead of time with:
 
 ```sh
 gprm --init-config
 ```
 
-This refuses to overwrite an existing file. `--config /path/to/config.toml` selects another file. Unknown settings and invalid modes/durations produce an error.
+This refuses to overwrite an existing file. `--config /path/to/gprm_config.toml` selects another file. Unknown settings and invalid modes/durations produce an error.
+
+If you previously used `~/.config/gprm/config.toml`, rename it to `gprm_config.toml` in the same directory before the next live run, or keep using it explicitly with `--config ~/.config/gprm/config.toml`. Existing files are not automatically renamed or overwritten. The default template is embedded from `internal/config/defaults.toml`, which also supplies runtime defaults for omitted settings.
 
 ```toml
 startup = "restore"          # restore | clipboard | empty | auto-discover
@@ -211,8 +213,10 @@ A merge observed while monitoring may be labeled **merged with failing checks**,
 
 ```sh
 make test                  # includes the race detector
-make check                 # go vet
-make build VERSION=0.1.0
+make check                 # formatting, go vet, and tests
+make build
 ```
+
+`VERSION` is the sole source of the application version. It is embedded at compile time for Make builds and direct `go build`, `go install`, and `go run` commands. To change the version, edit `VERSION` and rebuild; `gprm --version` reports the embedded value. No version flag, Make variable, or linker override is needed.
 
 Tests cover startup/config overrides, paginated GitHub results, changed PR heads, CI fallbacks, Jenkins credential scoping/redirects, superseded builds, estimates, run counting, merge observations, auto-quit semantics, session restoration, and terminal-size handling. They use fixtures and a fake HTTP transport; live Jenkins credentials are not needed.

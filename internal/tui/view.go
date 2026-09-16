@@ -271,7 +271,7 @@ Other         ? / Esc    close help
 ~ progress is a time estimate; — means unknown.
 Other CI checks use status from GitHub. No checks never means passing.
 Auto-quit considers all monitored PRs, including filtered-out rows.
-Startup and auto-quit defaults live in config.toml; flags override them.`
+Startup and auto-quit defaults live in gprm_config.toml; flags override them.`
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		lines = append(lines, ansi.Truncate(line, max(20, m.width), "…"))

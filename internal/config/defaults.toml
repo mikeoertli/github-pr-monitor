@@ -1,0 +1,31 @@
+# gprm settings. Command-line flags override these defaults.
+startup = "restore" # restore | clipboard | empty | auto-discover
+auto_quit = "all-closed" # never | builds-finished | all-passing | all-closed
+interval = "5s"
+request_timeout = "20s"
+sort = "repo" # repo | progress
+descending = false
+ci_column = "auto" # auto | always | never
+github_host = "github.com"
+discovery_limit = 100
+
+[tools]
+gh = "gh" # executable name or absolute path
+# Empty clipboard/open paths select the platform default.
+clipboard = ""
+clipboard_args = []
+open = ""
+open_args = []
+# macOS: clipboard = "/usr/bin/pbpaste", open = "/usr/bin/open"
+# Wayland: clipboard = "wl-paste", clipboard_args = ["--no-newline"]
+# X11: clipboard = "xclip", clipboard_args = ["-selection", "clipboard", "-o"]
+
+# Add an entry for each Jenkins server. Credentials are sent only to its
+# exact origin and URL path prefix. Cross-origin redirects are rejected.
+# Environment values override inline credentials when set.
+# [[jenkins]]
+# url = "https://ci.example.com/jenkins"
+# user = ""
+# token = ""
+# user_env = "JENKINS_USER"
+# token_env = "JENKINS_API_TOKEN"

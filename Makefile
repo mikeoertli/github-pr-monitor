@@ -1,11 +1,10 @@
 GO ?= go
 PREFIX ?= $(HOME)/.local
-VERSION ?= dev
 
 .PHONY: build completions test check install install-completions demo
 build:
 	mkdir -p bin
-	$(GO) build -ldflags '-X github.com/mikeoertli/github-pr-monitor/internal/app.Version=$(VERSION)' -o bin/gprm ./cmd/gprm
+	$(GO) build -o bin/gprm ./cmd/gprm
 	ln -sf gprm bin/ghprm
 	ln -sf gprm bin/github-pr-monitor
 	$(MAKE) completions
@@ -22,7 +21,9 @@ test:
 	$(GO) test -race ./...
 
 check:
+	test -z "$$($(GO) fmt ./...)"
 	$(GO) vet ./...
+	$(GO) test ./...
 
 demo: build
 	./bin/gprm --demo

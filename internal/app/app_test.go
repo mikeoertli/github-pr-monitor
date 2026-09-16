@@ -11,6 +11,40 @@ import (
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
 )
 
+func TestVersionAndDefaultConfigInitialization(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	want, err := os.ReadFile("../../VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if err := Run([]string{"--version", "--config", "/missing/config", "--gh", "/missing/gh"}, &out, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "gprm "+strings.TrimSpace(string(want)) {
+		t.Fatalf("version %q does not match VERSION", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("version wrote user files: %v %v", entries, err)
+	}
+	out.Reset()
+	if err := Run([]string{"--init-config"}, &out, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "gprm", "gprm_config.toml")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), path) {
+		t.Fatal(out.String())
+	}
+	if err := Run([]string{"--init-config"}, &out, &stderr); err == nil {
+		t.Fatal("overwrote existing default config")
+	}
+}
+
 func TestDemoDoesNotReadOrWriteUserFiles(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "broken.toml")
@@ -34,7 +68,7 @@ func TestCLIOverridesAndStartupModes(t *testing.T) {
 		t.Skip("fixture uses a POSIX executable")
 	}
 	dir := t.TempDir()
-	cfg := filepath.Join(dir, "config.toml")
+	cfg := filepath.Join(dir, "gprm_config.toml")
 	state := filepath.Join(dir, "session.json")
 	gh := filepath.Join(dir, "fake gh")
 	clip := filepath.Join(dir, "fake clipboard")
