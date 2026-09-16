@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/gprm-icon.png" alt="gprm icon: pull-request branches above a CI progress bar" width="160" height="160">
+</p>
+
 # github-pr-monitor (`gprm`)
 
 A keyboard-driven GitHub PR and build dashboard, styled after [kube-resource-monitor](https://github.com/mikeoertli/kube-resource-monitor). Paste a batch of PR links, follow their CI checks, and leave with a useful monitoring summary.
