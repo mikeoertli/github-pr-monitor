@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.3.0 — in progress
+## 0.3.1 — in progress
+
+- Close focused details and return to the table with a single Left or Esc press.
+
+## 0.3.0 — 2026-09-17
 
 - Emphasize footer headings and shortcut keys with bold/color while preserving no-color mode.
 - Add focused details navigation with arrow keys, page scrolling, line ranges, and overflow indicators.

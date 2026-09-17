@@ -56,8 +56,7 @@ func TestDetailsWarningsAndResponsiveLayout(t *testing.T) {
 	if !seenEnd {
 		t.Fatal("could not scroll to full CI URL")
 	}
-	m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // Leave details focus.
-	m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // Collapse in table mode.
+	m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // Close details and return to the table.
 	if m.expanded[p.Ref.URL] {
 		t.Fatal("collapse failed")
 	}

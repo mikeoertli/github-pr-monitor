@@ -375,6 +375,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			handled := true
 			switch key {
 			case "left", "esc":
+				m.expanded[m.detailFocus] = false
 				m.detailFocus, m.detailScroll = "", 0
 				return m, nil
 			case "up", "k", "[":

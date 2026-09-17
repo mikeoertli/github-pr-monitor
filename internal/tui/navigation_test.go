@@ -53,17 +53,18 @@ func TestDetailsFocusNavigation(t *testing.T) {
 		t.Fatal("scrolled above beginning")
 	}
 	m.Update(key("esc"))
-	if m.detailFocus != "" || m.filter != "acme" || !m.expanded[url] {
-		t.Fatal("leaving details cleared filter or expansion")
+	if m.detailFocus != "" || m.filter != "acme" || m.expanded[url] || m.selected() != i {
+		t.Fatal("Escape must close details while preserving the filter and selected PR")
 	}
 	m.Update(key("down"))
 	if m.selected() == i {
 		t.Fatal("table navigation not restored")
 	}
 	m.Update(key("right"))
+	url = m.PRs[m.selected()].Ref.URL
 	m.Update(key("left"))
-	if m.detailFocus != "" {
-		t.Fatal("left did not leave details")
+	if m.detailFocus != "" || m.expanded[url] || m.PRs[m.selected()].Ref.URL != url {
+		t.Fatal("Left must close details and keep the same PR selected in one press")
 	}
 	m.Update(key("right"))
 	m.Update(key("/"))

@@ -475,7 +475,7 @@ Navigate  [↑/k ↓/j] Select PR      [PgUp/PgDn] Page   [g/G] First/last
 Details   [Enter / Space] Toggle  [→] Focus details  [←] Collapse
           [Tab / Shift+Tab] Next/previous CI check
           When focused: [↑↓ / PgUp/PgDn] Scroll, [Home/End] First/last
-          [← / Esc] Return to table navigation
+          [← / Esc] Close details and return to table navigation
 Open      [o] GitHub PR           [b] Selected CI URL
 Copy      [y] Selected PR JSON    [Y] Filtered table JSON
           [c] gh request command [C] Jenkins curl requests
