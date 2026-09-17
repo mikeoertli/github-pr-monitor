@@ -21,7 +21,7 @@ func TestDetailsWarningsAndResponsiveLayout(t *testing.T) {
 	p.Jobs[0].Warning = "Could not retrieve Jenkins build: HTTP 403"
 	m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
 	view := m.View()
-	for _, want := range []string{"⚠ ▸", "HTTP 403", "BRANCH", "TITLE", "Inspect", "[o] Open PR", "[b] Open CI"} {
+	for _, want := range []string{"⚠ ▸", "HTTP 403", "BRANCH", "TITLE", "INSPECT", "[o] Open PR", "[b] Open CI"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in view:\n%s", want, view)
 		}
@@ -36,6 +36,7 @@ func TestDetailsWarningsAndResponsiveLayout(t *testing.T) {
 	// All content, including URLs, must remain reachable on a small terminal.
 	p.Jobs[0].URL = "https://ci.example.com/" + strings.Repeat("segment/", 40) + "end-marker"
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 18})
+	m.Update(tea.KeyMsg{Type: tea.KeyRight})
 	seenEnd := false
 	for n := 0; n < 80; n++ {
 		view = m.View()
@@ -50,12 +51,13 @@ func TestDetailsWarningsAndResponsiveLayout(t *testing.T) {
 				t.Fatal("overflowed terminal width")
 			}
 		}
-		m.Update(key("]"))
+		m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
 	if !seenEnd {
 		t.Fatal("could not scroll to full CI URL")
 	}
-	m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // Leave details focus.
+	m.Update(tea.KeyMsg{Type: tea.KeyLeft}) // Collapse in table mode.
 	if m.expanded[p.Ref.URL] {
 		t.Fatal("collapse failed")
 	}

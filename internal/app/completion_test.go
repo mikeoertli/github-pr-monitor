@@ -55,6 +55,7 @@ func TestCompletionValuesAndFlags(t *testing.T) {
 		{[]string{"-m", ""}, []string{"restore", "clipboard", "empty", "auto-discover", ":4"}},
 		{[]string{"--sort", ""}, []string{"repo", "progress", ":4"}},
 		{[]string{"--interval", ""}, []string{"5s", "10s", "1m"}},
+		{[]string{"--completed-retention", ""}, []string{"24h", "forever", "0s"}},
 		{[]string{"completion", ""}, []string{"bash", "zsh", "fish", "powershell"}},
 		{[]string{"--"}, []string{"--config", "--state", "--startup", "--auto-quit", "--interval", "--sort", "--gh", "--demo", "--once", "--init-config", "--version", "--no-color"}},
 	} {

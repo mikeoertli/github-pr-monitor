@@ -291,7 +291,7 @@ func TestDiscovery(t *testing.T) {
 		if args[len(args)-1] == "user" {
 			return []byte(`{"login":"someone"}`), nil
 		}
-		if !strings.Contains(s, "author:someone") || !strings.Contains(s, "is:open") {
+		if !strings.Contains(s, "author:someone") || (!strings.Contains(s, "is:open") && !strings.Contains(s, "is:closed")) {
 			t.Fatal(s)
 		}
 		return []byte(`{"items":[{"pull_request":{"html_url":"https://git.example.com/acme/api/pull/2"}}]}`), nil
@@ -299,6 +299,38 @@ func TestDiscovery(t *testing.T) {
 	refs, err := g.Discover(context.Background())
 	if err != nil || len(refs) != 1 || refs[0].Host != "git.example.com" {
 		t.Fatalf("%+v %v", refs, err)
+	}
+}
+
+func TestDiscoveryIncludesRecentClosures(t *testing.T) {
+	for _, retention := range []string{"24h", "forever", "0s"} {
+		g := New(config.Defaults())
+		g.Config.CompletedRetention = retention
+		closedSearches := 0
+		g.Runner = runnerFunc(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if args[len(args)-1] == "user" {
+				return []byte(`{"login":"someone"}`), nil
+			}
+			if strings.Contains(strings.Join(args, " "), "is:closed") {
+				closedSearches++
+				if !strings.Contains(strings.Join(args, " "), "closed:>=") {
+					t.Fatal("unbounded closed search")
+				}
+				return []byte(fmt.Sprintf(`{"items":[{"closed_at":%q,"pull_request":{"html_url":"https://github.com/acme/api/pull/2"}},{"closed_at":%q,"pull_request":{"html_url":"https://github.com/acme/api/pull/3"}},{"pull_request":{"html_url":"https://github.com/acme/api/pull/1"}}]}`, time.Now().Add(-time.Hour).Format(time.RFC3339), time.Now().Add(-25*time.Hour).Format(time.RFC3339))), nil
+			}
+			return []byte(`{"items":[{"pull_request":{"html_url":"https://github.com/acme/api/pull/1"}}]}`), nil
+		})
+		refs, err := g.Discover(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retention == "0s" {
+			if len(refs) != 1 || closedSearches != 0 {
+				t.Fatal("zero retention discovered closures")
+			}
+		} else if len(refs) != 2 || refs[1].Number != 2 || closedSearches != 1 {
+			t.Fatal("recent closure missing or old/duplicate included")
+		}
 	}
 }
 

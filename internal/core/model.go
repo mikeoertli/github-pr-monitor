@@ -138,6 +138,8 @@ type PRDetails struct {
 }
 
 type PR struct {
+	ClosedObservedAt   time.Time  // Fallback retention clock if GitHub omits the closure timestamp.
+	Expired            bool       // Removed by retention rather than a manual dismissal.
 	GitHubRequests     [][]string `json:",omitempty"` // Exact gh API arguments for the most recent update.
 	Details            PRDetails
 	LastAttempt        time.Time
@@ -192,6 +194,13 @@ func (p *PR) Apply(next PR, now time.Time) {
 			p.MergeNote = "merged with pending checks"
 		}
 	}
+	if next.Closed() {
+		if !p.Closed() || p.ClosedObservedAt.IsZero() {
+			p.ClosedObservedAt = now
+		}
+	} else {
+		p.ClosedObservedAt = time.Time{}
+	}
 	p.Title, p.Head, p.State, p.Jobs = next.Title, next.Head, next.State, next.Jobs
 	p.Details = next.Details
 	p.Error = ""
@@ -221,6 +230,21 @@ func (p *PR) Apply(next PR, now time.Time) {
 		record(j)
 	}
 }
+func (p PR) Closed() bool { return p.State == "MERGED" || p.State == "CLOSED" }
+func (p PR) CompletionTime() time.Time {
+	if p.State == "MERGED" && !p.Details.MergedAt.IsZero() {
+		return p.Details.MergedAt
+	}
+	if p.State == "CLOSED" && !p.Details.ClosedAt.IsZero() {
+		return p.Details.ClosedAt
+	}
+	return p.ClosedObservedAt
+}
+func (p PR) RetentionExpired(now time.Time, retention time.Duration) bool {
+	at := p.CompletionTime()
+	return !p.Removed && p.Fresh && p.Error == "" && p.Closed() && retention >= 0 && !at.IsZero() && !now.Before(at.Add(retention))
+}
+
 func (p PR) Status() string {
 	if p.Error != "" {
 		return "stale"

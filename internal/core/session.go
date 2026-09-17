@@ -12,41 +12,77 @@ import (
 )
 
 type Session struct {
-	Version int
-	PRs     []PR
+	Version   int
+	PRs       []PR
+	Dismissed []Ref `json:",omitempty"`
 }
 
 func LoadSession(path string) ([]PR, error) {
+	s, err := LoadSessionState(path)
+	return s.PRs, err
+}
+
+func LoadSessionState(path string) (Session, error) {
+	empty := Session{Version: 1}
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return empty, nil
 	}
 	if err != nil {
-		return nil, err
+		return empty, err
 	}
 	var s Session
 	if err = json.Unmarshal(b, &s); err != nil {
-		return nil, fmt.Errorf("cannot restore session: %w", err)
+		return empty, fmt.Errorf("cannot restore session: %w", err)
 	}
 	if s.Version != 1 {
-		return nil, fmt.Errorf("unsupported session version %d", s.Version)
+		return empty, fmt.Errorf("unsupported session version %d", s.Version)
 	}
 	var prs []PR
+	dismissed := map[string]Ref{}
+	for _, ref := range s.Dismissed {
+		r, err := ParseRef(ref.URL, ref.Host)
+		if err != nil {
+			return empty, fmt.Errorf("invalid saved dismissal: %w", err)
+		}
+		dismissed[strings.ToLower(r.URL)] = r
+	}
 	for _, p := range s.PRs {
 		ref, err := ParseRef(p.Ref.URL, p.Ref.Host)
 		if err != nil {
-			return nil, fmt.Errorf("invalid saved PR: %w", err)
+			return empty, fmt.Errorf("invalid saved PR: %w", err)
 		}
-		p.Ref = ref
-		p.Fresh = false
+		p.Ref, p.Fresh = ref, false
 		if !p.Removed {
 			prs = append(prs, p)
+		} else if !p.Expired {
+			dismissed[strings.ToLower(ref.URL)] = ref
 		}
 	}
-	return prs, nil
+	s.PRs, s.Dismissed = prs, nil
+	for _, ref := range dismissed {
+		s.Dismissed = append(s.Dismissed, ref)
+	}
+	return s, nil
 }
-func SaveSession(path string, prs []PR) error {
-	b, err := json.MarshalIndent(Session{Version: 1, PRs: prs}, "", "  ")
+func SaveSession(path string, prs []PR, dismissed ...Ref) error {
+	byURL := map[string]Ref{}
+	for _, ref := range dismissed {
+		byURL[strings.ToLower(ref.URL)] = ref
+	}
+	for _, p := range prs {
+		if p.Removed && !p.Expired {
+			byURL[strings.ToLower(p.Ref.URL)] = p.Ref
+		} else if !p.Removed {
+			delete(byURL, strings.ToLower(p.Ref.URL))
+		}
+	}
+	dismissed = nil
+	for _, ref := range byURL {
+		dismissed = append(dismissed, ref)
+	}
+	sort.Slice(dismissed, func(i, j int) bool { return dismissed[i].URL < dismissed[j].URL })
+	b, err := json.MarshalIndent(Session{Version: 1, PRs: prs, Dismissed: dismissed}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -79,8 +115,10 @@ func Summary(prs []PR, elapsed time.Duration) string {
 	fmt.Fprintln(w, "PR / JOB\tOBSERVED RUNS\tMONITORED\tFINAL STATUS")
 	for _, p := range prs {
 		status := p.FinalStatus()
-		if p.Removed {
-			status += " (removed from monitor)"
+		if p.Expired {
+			status += " (retention expired)"
+		} else if p.Removed {
+			status += " (dismissed)"
 		}
 		if p.Error != "" || !p.Fresh {
 			status += " · stale"

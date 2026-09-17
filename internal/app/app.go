@@ -30,6 +30,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	statePath := flags.String("state", config.StatePath(), "saved monitoring session")
 	startup := flags.StringP("startup", "m", "", "restore | clipboard | empty | auto-discover")
 	quit := flags.StringP("auto-quit", "q", "", "never | builds-finished | all-passing | all-closed")
+	retention := flags.String("completed-retention", "", "keep merged/closed PRs for a duration (24h), forever, or 0s")
 	interval := flags.StringP("interval", "i", "", "status refresh interval, e.g. 5s")
 	sortBy := flags.StringP("sort", "s", "", "repo | progress")
 	gh := flags.String("gh", "", "gh executable path")
@@ -82,6 +83,9 @@ func Run(args []string, out, stderr io.Writer) error {
 	if *quit != "" {
 		c.AutoQuit = *quit
 	}
+	if *retention != "" {
+		c.CompletedRetention = *retention
+	}
 	if *interval != "" {
 		c.Interval = *interval
 	}
@@ -115,13 +119,15 @@ func Run(args []string, out, stderr io.Writer) error {
 	source := provider.New(c)
 	actions := tui.Actions{Copy: func(ctx context.Context, text string) error { return CopyClipboard(ctx, c, text) }, Clipboard: func(ctx context.Context) (string, error) { return Clipboard(ctx, c) }, Open: func(ctx context.Context, raw string) error { return Open(ctx, c, raw) }}
 	var prs []core.PR
+	var saved core.Session
 	if *demo {
 		prs = tui.DemoPRs()
 	} else {
 		var refs []core.Ref
 		switch c.Startup {
 		case "restore":
-			prs, err = core.LoadSession(*statePath)
+			saved, err = core.LoadSessionState(*statePath)
+			prs = saved.PRs
 		case "clipboard":
 			var text string
 			text, err = Clipboard(ctx, c)
@@ -129,7 +135,15 @@ func Run(args []string, out, stderr io.Writer) error {
 				refs, err = core.ParseBatch(text, c.GitHubHost)
 			}
 		case "auto-discover":
-			refs, err = source.Discover(ctx)
+			saved, err = core.LoadSessionState(*statePath)
+			if err == nil {
+				refs, err = source.Discover(ctx)
+			}
+			for _, p := range saved.PRs {
+				if p.Closed() {
+					prs = append(prs, p)
+				}
+			}
 			if err == nil && len(refs) >= c.DiscoveryLimit {
 				fmt.Fprintln(stderr, "Discovery limit reached; increase discovery_limit to include more PRs.")
 			}
@@ -138,7 +152,22 @@ func Run(args []string, out, stderr io.Writer) error {
 			return err
 		}
 		for _, ref := range refs {
-			prs = append(prs, core.NewPR(ref, time.Now()))
+			skip := false
+			if c.Startup == "auto-discover" {
+				for _, d := range saved.Dismissed {
+					if strings.EqualFold(d.URL, ref.URL) {
+						skip = true
+					}
+				}
+			}
+			for _, p := range prs {
+				if strings.EqualFold(p.Ref.URL, ref.URL) {
+					skip = true
+				}
+			}
+			if !skip {
+				prs = append(prs, core.NewPR(ref, time.Now()))
+			}
 		}
 	}
 	for _, arg := range flags.Args() {
@@ -157,6 +186,12 @@ func Run(args []string, out, stderr io.Writer) error {
 		}
 	}
 	m := tui.New(ctx, c, prs, source, actions, *statePath, *demo)
+	for _, ref := range saved.Dismissed {
+		m.Dismissed[strings.ToLower(ref.URL)] = ref
+	}
+	for _, p := range prs {
+		delete(m.Dismissed, strings.ToLower(p.Ref.URL))
+	}
 	if *once {
 		start := time.Now()
 		if *demo {
@@ -172,6 +207,7 @@ func Run(args []string, out, stderr io.Writer) error {
 				m.PRs[i].Apply(source.Fetch(ctx, p.Ref), time.Now())
 			}
 		}
+		m.ExpireCompleted(time.Now())
 		m.Finish()
 		fmt.Fprintln(out, m.View())
 		fmt.Fprintln(out)

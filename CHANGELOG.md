@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.2.0 — in progress
+## 0.3.0 — in progress
+
+- Emphasize footer headings and shortcut keys with bold/color while preserving no-color mode.
+- Add focused details navigation with arrow keys, page scrolling, line ranges, and overflow indicators.
+
+- Retain completed PRs for 24 hours by default, with configurable duration/forever retention and a CLI override.
+- Remember dismissals, retain completion history on restore/auto-discovery, and discover recently closed PRs.
+- Show expiry/dismiss controls while preserving existing auto-quit behavior.
+
+## 0.2.0 — 2026-09-17
 
 - Accept Jenkins `/display/redirect` build links, populate build numbers before fetching, and normalize copied curl endpoints.
 - Respect explicit GitHub merge/closure facts, show lifecycle counts, and hide mergeability for closed PRs.

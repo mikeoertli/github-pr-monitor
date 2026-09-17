@@ -69,32 +69,50 @@ func primaryJob(p core.PR) *core.Job {
 	return nil
 }
 
+func (m *Model) shortcut(hint string) string {
+	key, label, ok := strings.Cut(hint, "]")
+	if !ok {
+		return hint
+	}
+	return m.paint(accent, key+"]") + label
+}
+
 // footer separates actions into labeled groups and keeps keycaps readable without color.
 func (m *Model) footer() []string {
 	if m.mode != "" {
 		return []string{m.paint(accent, m.mode+" › ") + m.input.View(), "[Enter] Apply   ·   [Esc] Cancel"}
 	}
 	if m.width < 80 {
-		return []string{"[Enter] Details  ·  [o] PR  ·  [b] CI", "[c/C] Commands  ·  [?] Keys  ·  [q] Quit"}
+		if m.detailFocus != "" {
+			return []string{m.shortcut("[↑↓] Scroll") + " · " + m.shortcut("[←/Esc] Back"), m.shortcut("[?] Keys") + " · " + m.shortcut("[q] Quit")}
+		}
+		return []string{m.shortcut("[→] Read details") + " · " + m.shortcut("[o] PR") + " · " + m.shortcut("[b] CI"), m.shortcut("[?] Keys") + " · " + m.shortcut("[q] Quit")}
 	}
 	groups := [][]string{
-		{"PRs", "[v] Paste", "[a] Add", "[d] Discover", "[/] Filter", "[s] Sort", "[r] Reverse"},
-		{"Inspect", "[Enter] Details", "[Tab] Check", "[o] Open PR", "[b] Open CI"},
-		{"Copy", "[y] PR JSON", "[Y] Table JSON", "[c] gh command", "[C] Jenkins curl"},
-		{"Watch", "[↑↓] Select", "[ / ] Scroll details", "[p] Pause", "[R] Refresh", "[?] Help", "[q] Quit"},
+		{"PRS", "[v] Paste", "[a] Add", "[d] Discover", "[x] Dismiss", "[/] Filter", "[s] Sort", "[r] Reverse"},
+		{"INSPECT", "[Enter] Details", "[→] Read details", "[Tab] Check", "[o] Open PR", "[b] Open CI"},
+		{"COPY", "[y] PR JSON", "[Y] Table JSON", "[c] gh command", "[C] Jenkins curl"},
+		{"WATCH", "[↑↓] Select", "[p] Pause", "[R] Refresh", "[?] Help", "[q] Quit"},
+	}
+	if m.detailFocus != "" {
+		groups[1][1], groups[1][2] = "[↑↓] Scroll details", "[←/Esc] Back to table"
+		groups[3][1] = "[PgUp/PgDn] Scroll page"
 	}
 	var lines []string
 	for _, group := range groups {
-		line := cell(group[0], 8)
+		line := m.paint(accent, cell(group[0], 8))
+		items := 0
 		for _, hint := range group[1:] {
-			if ansi.StringWidth(line)+len(hint)+5 > m.width {
+			if items > 0 && ansi.StringWidth(line)+ansi.StringWidth(hint)+5 > m.width {
 				lines = append(lines, line)
 				line = strings.Repeat(" ", 8)
+				items = 0
 			}
-			if strings.TrimSpace(line) != "" && ansi.StringWidth(line) > 8 {
-				line += "  │  "
+			if items > 0 {
+				line += m.paint(muted, "  │  ")
 			}
-			line += hint
+			line += m.shortcut(hint)
+			items++
 		}
 		lines = append(lines, line)
 	}
@@ -226,6 +244,13 @@ func (m *Model) details(p core.PR, selected bool) []string {
 	}
 	d := p.Details
 	add(p.Title)
+	if p.Closed() {
+		if retention := m.Config.RetentionDuration(); retention < 0 {
+			add("Kept until dismissed · [x] Dismiss")
+		} else if at := p.CompletionTime(); !at.IsZero() {
+			add("Kept until: " + stamp(at.Add(retention)) + " · [x] Dismiss sooner")
+		}
+	}
 	add(fmt.Sprintf("Branch: %s → %s  ·  Author: %s  ·  Draft: %t", value(d.Branch), value(d.BaseBranch), value(d.Author), d.Draft))
 	add(fmt.Sprintf("Changes: +%d −%d · %d files · %d commits · %d comments", d.Additions, d.Deletions, d.ChangedFiles, d.Commits, d.Comments))
 	mergeable := value(d.Mergeable)
@@ -346,10 +371,11 @@ func (m *Model) View() (view string) {
 		header += cell(col.name, col.width)
 	}
 	add(m.paint(muted, header))
+	m.selected() // Keep details attached to the same PR after refreshes and sorting.
 	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
 	m.cursor = max(0, min(m.cursor, len(rows)-1))
 	var body []string
-	focus := 0
+	focus, detailEnd := 0, 0
 	for pos, i := range rows {
 		p := m.PRs[i]
 		selected := pos == m.cursor
@@ -359,11 +385,11 @@ func (m *Model) View() (view string) {
 		body = append(body, m.tableRow(p, selected, cols))
 		if m.expanded[p.Ref.URL] {
 			detail := m.details(p, selected)
-			if selected {
-				m.detailScroll = min(m.detailScroll, len(detail))
-				focus += m.detailScroll
-			}
+			body = append(body, m.paint(accent, fmt.Sprintf("      ├ DETAILS · %d lines · [→] Focus to scroll", len(detail))))
 			body = append(body, detail...)
+			if selected {
+				detailEnd = len(body)
+			}
 		}
 	}
 	if len(body) == 0 {
@@ -373,18 +399,43 @@ func (m *Model) View() (view string) {
 		}
 	}
 	height := m.visible()
-	m.scroll = max(0, min(m.scroll, max(0, len(body)-height)))
-	if focus < m.scroll {
-		m.scroll = focus
-	}
-	if focus >= m.scroll+height {
-		m.scroll = focus - height + 1
-	}
-	for n := 0; n < height; n++ {
-		if i := m.scroll + n; i < len(body) {
-			add(body[i])
-		} else {
-			add("")
+	if i := m.selected(); i >= 0 && m.detailFocus != "" {
+		detail := m.details(m.PRs[i], true)
+		m.detailScroll = max(0, min(m.detailScroll, len(detail)-m.detailHeight()))
+		end := min(len(detail), m.detailScroll+m.detailHeight())
+		above, below := "↑ top", "↓ end"
+		if m.detailScroll > 0 {
+			above = "↑ more"
+		}
+		if end < len(detail) {
+			below = "↓ more"
+		}
+		body = []string{m.tableRow(m.PRs[i], true, cols), m.paint(accent, fmt.Sprintf("  DETAILS · %d–%d/%d · %s · %s · [←/Esc] Back", m.detailScroll+1, end, len(detail), above, below))}
+		body = append(body, detail[m.detailScroll:end]...)
+		// The table's scroll position is preserved for returning from details.
+		for n := 0; n < height; n++ {
+			if n < len(body) {
+				add(body[n])
+			} else {
+				add("")
+			}
+		}
+	} else {
+		m.scroll = max(0, min(m.scroll, max(0, len(body)-height)))
+		if focus < m.scroll {
+			m.scroll = focus
+		}
+		if focus >= m.scroll+height {
+			m.scroll = focus - height + 1
+		}
+		for n := 0; n < height; n++ {
+			if n == height-1 && detailEnd > m.scroll+height && focus >= m.scroll {
+				add(m.paint(accent, "      ↓ More details · [→] Focus to scroll"))
+			} else if i := m.scroll + n; i < len(body) {
+				add(body[i])
+			} else {
+				add("")
+			}
 		}
 	}
 	add(m.paint(muted, strings.Repeat("─", width)))
@@ -397,8 +448,10 @@ func (m *Model) View() (view string) {
 		add(m.paint(accent, core.Clean(label)))
 		if issues := p.Warnings(); len(issues) > 0 {
 			add(m.paint(warn, "⚠ "+core.Clean(strings.Join(issues, " · "))))
+		} else if m.detailFocus != "" {
+			add(m.paint(accent, "[↑↓] Scroll details · [PgUp/PgDn] Page · [←/Esc] Back to table"))
 		} else {
-			add(m.paint(muted, "[Enter] Expand/collapse PR details and URLs · [y] Copy this PR · [Y] Copy filtered table"))
+			add(m.paint(muted, "[Enter] Expand/collapse · [→] Focus details to scroll · [y/Y] Copy JSON"))
 		}
 	} else {
 		add("Clipboard accepts several PR links, including prose.")
@@ -406,7 +459,7 @@ func (m *Model) View() (view string) {
 	}
 	add(m.paint(warn, core.Clean(m.notice)))
 	for _, line := range m.footer() {
-		add(m.paint(muted, line))
+		add(line)
 	}
 	if m.height > 0 && len(lines) > m.height {
 		lines = append(lines[:max(0, m.height-1)], lines[len(lines)-1])
@@ -419,20 +472,21 @@ func (m *Model) helpView() string {
 
 Add       [v / Ctrl+V] Clipboard   [a] Add PRs   [d] Discover
 Navigate  [↑/k ↓/j] Select PR      [PgUp/PgDn] Page   [g/G] First/last
-Details   [Enter / Space] Toggle  [→/←] Expand/collapse
+Details   [Enter / Space] Toggle  [→] Focus details  [←] Collapse
           [Tab / Shift+Tab] Next/previous CI check
-          [ / ] Scroll through expanded details (including long URLs)
+          When focused: [↑↓ / PgUp/PgDn] Scroll, [Home/End] First/last
+          [← / Esc] Return to table navigation
 Open      [o] GitHub PR           [b] Selected CI URL
 Copy      [y] Selected PR JSON    [Y] Filtered table JSON
           [c] gh request command [C] Jenkins curl requests
 Arrange   [/] Fuzzy filter        [Esc] Clear filter
           [s] Repo/progress sort  [r] Reverse sort
 Watch     [p] Pause/resume        [R] Refresh now
-          [x] Remove selected PR from monitoring
+          [x] Dismiss PR (remembered across launches)
 Quit      [q / Q / Ctrl+C] Quit and print summary
 
 ⚠ warns about unavailable CI URLs/details or a failed refresh.
-Expand the row to read warnings and full URLs; [ / ] scroll details.
+Details show a line range and ↑/↓ indicators for more content.
 JSON contains the latest displayed data and freshness/error fields.
 [Y] includes filtered rows outside the viewport, in table order.
 ~ estimated progress; ! overdue; — unknown. Red → green → orange/red.

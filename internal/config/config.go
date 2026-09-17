@@ -32,18 +32,19 @@ type Jenkins struct {
 }
 
 type Config struct {
-	NoColor        bool      `toml:"no_color"`
-	Startup        string    `toml:"startup"`
-	AutoQuit       string    `toml:"auto_quit"`
-	Interval       string    `toml:"interval"`
-	Timeout        string    `toml:"request_timeout"`
-	Sort           string    `toml:"sort"`
-	Descending     bool      `toml:"descending"`
-	CIColumn       string    `toml:"ci_column"`
-	GitHubHost     string    `toml:"github_host"`
-	DiscoveryLimit int       `toml:"discovery_limit"`
-	Tools          Tools     `toml:"tools"`
-	Jenkins        []Jenkins `toml:"jenkins"`
+	CompletedRetention string    `toml:"completed_retention"`
+	NoColor            bool      `toml:"no_color"`
+	Startup            string    `toml:"startup"`
+	AutoQuit           string    `toml:"auto_quit"`
+	Interval           string    `toml:"interval"`
+	Timeout            string    `toml:"request_timeout"`
+	Sort               string    `toml:"sort"`
+	Descending         bool      `toml:"descending"`
+	CIColumn           string    `toml:"ci_column"`
+	GitHubHost         string    `toml:"github_host"`
+	DiscoveryLimit     int       `toml:"discovery_limit"`
+	Tools              Tools     `toml:"tools"`
+	Jenkins            []Jenkins `toml:"jenkins"`
 }
 
 func Defaults() Config {
@@ -117,6 +118,12 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must be a duration of at least 1s", name)
 		}
 	}
+	if c.CompletedRetention != "forever" {
+		d, err := time.ParseDuration(c.CompletedRetention)
+		if err != nil || d < 0 {
+			return fmt.Errorf("completed_retention must be a nonnegative duration (e.g. 24h) or forever")
+		}
+	}
 	if c.Tools.GH == "" {
 		return fmt.Errorf("tools.gh cannot be empty")
 	}
@@ -133,6 +140,14 @@ func (c Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (c Config) RetentionDuration() time.Duration {
+	if c.CompletedRetention == "forever" {
+		return -1
+	}
+	d, _ := time.ParseDuration(c.CompletedRetention)
+	return d
 }
 
 func (c Config) PollInterval() time.Duration   { d, _ := time.ParseDuration(c.Interval); return d }

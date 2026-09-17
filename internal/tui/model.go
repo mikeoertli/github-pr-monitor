@@ -25,6 +25,7 @@ type Actions struct {
 type Model struct {
 	Config                                      config.Config
 	PRs                                         []core.PR
+	Dismissed                                   map[string]core.Ref
 	Source                                      Source
 	Actions                                     Actions
 	Context                                     context.Context
@@ -42,6 +43,7 @@ type Model struct {
 	demoStep                                    int
 	expanded                                    map[string]bool
 	scroll, detailScroll                        int
+	detailFocus                                 string
 }
 type tickMsg time.Time
 type pollMsg struct{ PRs []core.PR }
@@ -63,7 +65,7 @@ func New(ctx context.Context, c config.Config, prs []core.PR, source Source, act
 	input.CharLimit = 32768
 	input.Width = 70
 	now := time.Now()
-	return &Model{Context: ctx, Config: c, PRs: prs, Source: source, Actions: actions, StatePath: state, Demo: demo, Started: now, lastTick: now, width: 120, height: 30, input: input, expanded: map[string]bool{}}
+	return &Model{Context: ctx, Config: c, PRs: prs, Source: source, Actions: actions, StatePath: state, Demo: demo, Started: now, lastTick: now, width: 120, height: 30, input: input, expanded: map[string]bool{}, Dismissed: map[string]core.Ref{}}
 }
 func (m *Model) Init() tea.Cmd { return tea.Batch(tick(), m.poll()) }
 func tick() tea.Cmd            { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
@@ -116,12 +118,14 @@ func (m *Model) add(refs []core.Ref) int {
 	m.account(time.Now())
 	n := 0
 	for _, ref := range refs {
+		delete(m.Dismissed, strings.ToLower(ref.URL))
 		found := false
 		for i, p := range m.PRs {
 			if strings.EqualFold(p.Ref.URL, ref.URL) {
 				found = true
 				if p.Removed {
 					m.PRs[i].Removed = false
+					m.PRs[i].Expired = false
 					m.PRs[i].Fresh = false
 					n++
 				}
@@ -140,7 +144,11 @@ func (m *Model) save() {
 	if m.Demo || m.StatePath == "" {
 		return
 	}
-	m.SaveError = core.SaveSession(m.StatePath, m.PRs)
+	var dismissed []core.Ref
+	for _, ref := range m.Dismissed {
+		dismissed = append(dismissed, ref)
+	}
+	m.SaveError = core.SaveSession(m.StatePath, m.PRs, dismissed...)
 	if err := m.SaveError; err != nil {
 		m.notice = "Could not save session: " + core.Clean(err.Error())
 	}
@@ -165,9 +173,37 @@ func (m *Model) account(now time.Time) {
 	}
 	m.lastTick = now
 }
+
+// ExpireCompleted only removes successfully refreshed closed snapshots, so an
+// offline or newly reopened PR cannot disappear based on unverified saved data.
+func (m *Model) ExpireCompleted(now time.Time) {
+	count := 0
+	for i := range m.PRs {
+		if m.PRs[i].RetentionExpired(now, m.Config.RetentionDuration()) {
+			m.PRs[i].Removed, m.PRs[i].Expired = true, true
+			count++
+		}
+	}
+	if count > 0 {
+		m.notice = fmt.Sprintf("%d completed PR(s) expired; retained in this session's summary.", count)
+	}
+}
+
 func (m *Model) Finish() { m.account(time.Now()); m.save() }
 func (m *Model) selected() int {
 	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
+	if m.detailFocus != "" {
+		found := false
+		for pos, i := range rows {
+			if m.PRs[i].Ref.URL == m.detailFocus {
+				m.cursor, found = pos, true
+				break
+			}
+		}
+		if !found {
+			m.detailFocus, m.detailScroll = "", 0
+		}
+	}
 	if len(rows) == 0 {
 		return -1
 	}
@@ -175,6 +211,7 @@ func (m *Model) selected() int {
 	return rows[m.cursor]
 }
 func (m *Model) startInput(mode string) tea.Cmd {
+	m.detailFocus, m.detailScroll = "", 0
 	m.mode = mode
 	m.input.SetValue("")
 	m.input.Placeholder = "PR URLs or owner/repo#123 (multiple accepted)"
@@ -241,12 +278,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+		quitReady := core.ShouldQuit(m.PRs, m.Config.AutoQuit)
+		m.ExpireCompleted(time.Now())
 		m.save()
 		if m.refreshAgain {
 			m.refreshAgain = false
 			return m, m.poll()
 		}
-		if m.mode == "" && !m.importing && !m.paused && core.ShouldQuit(m.PRs, m.Config.AutoQuit) {
+		if m.mode == "" && !m.importing && !m.paused && quitReady {
 			m.QuitReason = "auto-quit: " + m.Config.AutoQuit
 			return m, tea.Quit
 		}
@@ -256,8 +295,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = core.Clean(msg.Err.Error())
 			break
 		}
-		n := m.add(msg.Refs)
-		m.notice = fmt.Sprintf("Added %d PRs from %s (%d already monitored).", n, msg.Label, len(msg.Refs)-n)
+		refs := msg.Refs
+		if msg.Label == "discovery" {
+			refs = nil
+			for _, ref := range msg.Refs {
+				if _, skip := m.Dismissed[strings.ToLower(ref.URL)]; !skip {
+					refs = append(refs, ref)
+				}
+			}
+		}
+		n := m.add(refs)
+		m.notice = fmt.Sprintf("Added %d PRs from %s (%d already monitored or dismissed).", n, msg.Label, len(msg.Refs)-n)
 		if msg.Label == "discovery" && len(msg.Refs) >= m.Config.DiscoveryLimit {
 			m.notice += " Discovery limit reached; increase discovery_limit for more."
 		}
@@ -322,6 +370,35 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if i := m.selected(); i >= 0 && m.detailFocus != "" {
+			limit := max(0, len(m.details(m.PRs[i], true))-m.detailHeight())
+			handled := true
+			switch key {
+			case "left", "esc":
+				m.detailFocus, m.detailScroll = "", 0
+				return m, nil
+			case "up", "k", "[":
+				m.detailScroll--
+			case "down", "j", "]":
+				m.detailScroll++
+			case "pgup":
+				m.detailScroll -= m.detailHeight()
+			case "pgdown":
+				m.detailScroll += m.detailHeight()
+			case "home", "g":
+				m.detailScroll = 0
+			case "end", "G":
+				m.detailScroll = limit
+			case "right":
+				return m, nil
+			default:
+				handled = false
+			}
+			if handled {
+				m.detailScroll = max(0, min(m.detailScroll, limit))
+				return m, nil
+			}
+		}
 		switch key {
 		case "Q", "q":
 			m.QuitReason = "quit"
@@ -371,17 +448,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				url := m.PRs[i].Ref.URL
 				if key == "right" {
 					m.expanded[url] = true
+					m.detailFocus = url
 				} else if key == "left" {
 					m.expanded[url] = false
 				} else {
 					m.expanded[url] = !m.expanded[url]
+					m.detailFocus = ""
 				}
 				m.detailScroll = 0
 			}
-		case "]":
-			m.detailScroll++
-		case "[":
-			m.detailScroll = max(0, m.detailScroll-1)
 		case "c", "C":
 			return m, m.copyCommand(key == "C")
 		case "y", "Y":
@@ -410,8 +485,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "x":
 			if i := m.selected(); i >= 0 {
 				m.account(time.Now())
-				m.PRs[i].Removed = true
-				m.notice = "PR removed from monitoring; retained in this session's summary."
+				m.detailFocus, m.detailScroll = "", 0
+				m.PRs[i].Removed, m.PRs[i].Expired = true, false
+				m.Dismissed[strings.ToLower(m.PRs[i].Ref.URL)] = m.PRs[i].Ref
+				m.notice = "PR dismissed; discovery will skip it. Paste it again to restore it."
 				m.save()
 			}
 		case "o", "b":
@@ -438,7 +515,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (m *Model) visible() int { return max(1, m.height-8-len(m.footer())) }
+func (m *Model) detailHeight() int { return max(1, m.visible()-2) }
+func (m *Model) visible() int      { return max(1, m.height-8-len(m.footer())) }
 func (m *Model) selectedJob(p core.PR) *core.Job {
 	if len(p.Jobs) == 0 {
 		return nil

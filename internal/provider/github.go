@@ -341,36 +341,53 @@ func (g *GitHub) Discover(ctx context.Context) ([]core.Ref, error) {
 		return nil, fmt.Errorf("could not determine GitHub user")
 	}
 	var refs []core.Ref
-	for page := 1; len(refs) < g.Config.DiscoveryLimit; page++ {
-		b, err = g.run(ctx, "api", "--hostname", g.Config.GitHubHost, "--method", "GET", "search/issues", "-f", "q=is:pr is:open author:"+user.Login, "-f", "sort=updated", "-f", "order=desc", "-F", "per_page=100", "-F", "page="+strconv.Itoa(page))
-		if err != nil {
-			return nil, err
-		}
-		var result struct {
-			IncompleteResults bool `json:"incomplete_results"`
-			Items             []struct {
-				PullRequest struct {
-					HTMLURL string `json:"html_url"`
-				} `json:"pull_request"`
+	seen := map[string]bool{}
+	now := time.Now()
+	window := g.Config.RetentionDuration()
+	if window < 0 {
+		window = 24 * time.Hour
+	}
+	queries := []string{"is:pr is:open author:" + user.Login}
+	if window > 0 {
+		queries = append(queries, "is:pr is:closed author:"+user.Login+" closed:>="+now.Add(-window).UTC().Format("2006-01-02"))
+	}
+	for queryIndex, search := range queries {
+		for page := 1; page <= 10 && len(refs) < g.Config.DiscoveryLimit; page++ {
+			b, err = g.run(ctx, "api", "--hostname", g.Config.GitHubHost, "--method", "GET", "search/issues", "-f", "q="+search, "-f", "sort=updated", "-f", "order=desc", "-F", "per_page=100", "-F", "page="+strconv.Itoa(page))
+			if err != nil {
+				return nil, err
 			}
-		}
-		if json.Unmarshal(b, &result) != nil {
-			return nil, fmt.Errorf("invalid discovery response")
-		}
-		if result.IncompleteResults {
-			return nil, fmt.Errorf("GitHub returned incomplete search results; retry discovery")
-		}
-		for _, item := range result.Items {
-			r, e := core.ParseRef(item.PullRequest.HTMLURL, g.Config.GitHubHost)
-			if e == nil {
-				refs = append(refs, r)
+			var result struct {
+				IncompleteResults bool `json:"incomplete_results"`
+				Items             []struct {
+					ClosedAt    time.Time `json:"closed_at"`
+					PullRequest struct {
+						HTMLURL string `json:"html_url"`
+					} `json:"pull_request"`
+				}
 			}
-			if len(refs) >= g.Config.DiscoveryLimit {
+			if json.Unmarshal(b, &result) != nil {
+				return nil, fmt.Errorf("invalid discovery response")
+			}
+			if result.IncompleteResults {
+				return nil, fmt.Errorf("GitHub returned incomplete search results; retry discovery")
+			}
+			for _, item := range result.Items {
+				if queryIndex > 0 && !item.ClosedAt.IsZero() && !item.ClosedAt.After(now.Add(-window)) {
+					continue
+				}
+				r, e := core.ParseRef(item.PullRequest.HTMLURL, g.Config.GitHubHost)
+				if e == nil && !seen[strings.ToLower(r.URL)] {
+					seen[strings.ToLower(r.URL)] = true
+					refs = append(refs, r)
+				}
+				if len(refs) >= g.Config.DiscoveryLimit {
+					break
+				}
+			}
+			if len(result.Items) < 100 {
 				break
 			}
-		}
-		if len(result.Items) < 100 {
-			break
 		}
 	}
 	return refs, nil

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mikeoertli/github-pr-monitor/internal/config"
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
@@ -191,5 +192,62 @@ func TestStandardFlagsAndNoColor(t *testing.T) {
 	}
 	if !strings.HasPrefix(out.String(), "gprm ") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestAutoDiscoverRetainsCompletedRowsAndDismissals(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fixture uses POSIX executable")
+	}
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "gprm_config.toml")
+	state := filepath.Join(dir, "session.json")
+	gh := filepath.Join(dir, "fake gh")
+	if err := os.WriteFile(gh, []byte(`#!/bin/sh
+case "$*" in
+ *graphql*number=1*) printf '%s' '{"data":{"repository":{"pullRequest":{"title":"Completed","state":"MERGED","headRefOid":"a","merged":true,"mergedAt":"2020-01-01T00:00:00Z","commits":{"nodes":[]}}}}}' ;;
+ *graphql*) printf '%s' '{"data":{"repository":{"pullRequest":{"title":"Open","state":"OPEN","headRefOid":"b","commits":{"nodes":[]}}}}}' ;;
+ *search/issues*) printf '%s' '{"items":[{"pull_request":{"html_url":"https://github.com/acme/api/pull/2"}}]}' ;;
+ *user*) printf '%s' '{"login":"fixture"}' ;;
+ *) exit 1 ;;
+esac
+`), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("completed_retention='forever'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := core.ParseRef("acme/api#1", "github.com")
+	b, _ := core.ParseRef("acme/api#2", "github.com")
+	prs := []core.PR{core.NewPR(a, time.Now()), core.NewPR(b, time.Now())}
+	prs[0].State = "MERGED"
+	prs[1].Removed = true
+	if err := core.SaveSession(state, prs); err != nil {
+		t.Fatal(err)
+	}
+	run := func(extra ...string) core.Session {
+		t.Helper()
+		var out, stderr bytes.Buffer
+		args := []string{"--once", "--startup", "auto-discover", "--auto-quit", "never", "--config", cfg, "--state", state, "--gh", gh}
+		if err := Run(append(args, extra...), &out, &stderr); err != nil {
+			t.Fatal(err)
+		}
+		s, err := core.LoadSessionState(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	s := run()
+	if len(s.PRs) != 1 || s.PRs[0].Ref.Number != 1 || len(s.Dismissed) != 1 {
+		t.Fatal("auto-discover lost completed row or dismissal")
+	}
+	s = run("acme/api#2")
+	if len(s.PRs) != 2 || len(s.Dismissed) != 0 {
+		t.Fatal("explicit CLI add did not override dismissal")
+	}
+	s = run("--completed-retention", "0s")
+	if len(s.PRs) != 1 || s.PRs[0].Ref.Number != 2 {
+		t.Fatal("retention CLI override ignored")
 	}
 }

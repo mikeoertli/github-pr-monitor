@@ -11,6 +11,7 @@ A keyboard-driven GitHub PR and build dashboard, styled after [kube-resource-mon
 - Fuzzy filtering (including branches and authors), repository/progress sorting, browser shortcuts, and automatic session restoration.
 - Expandable PR rows with branch, review, change counts, timestamps, and full PR/CI URLs.
 - Visible CI warnings and clipboard export of the selected PR or filtered table as JSON.
+- Completed PRs stay visible for 24 hours by default, or until dismissed with configurable indefinite retention.
 - Configurable startup and exit behavior; no-check and stale snapshots never count as passing.
 - Mixed-provider sessions automatically show a CI column on wide terminals.
 - An offline demo that never touches your saved session or calls GitHub/Jenkins.
@@ -39,7 +40,7 @@ gprm completion fish
 gprm completion powershell
 ```
 
-Completions cover flags, startup modes, auto-quit modes, sort choices, interval examples, and file paths. All three command names are supported. Generating or requesting completions works offline, without `gh`, and does not read or write your config or session.
+Completions cover flags, startup modes, auto-quit modes, sort choices, interval/retention examples, and file paths. All three command names are supported. Generating or requesting completions works offline, without `gh`, and does not read or write your config or session.
 
 **Zsh** (the default macOS shell):
 
@@ -102,11 +103,12 @@ Alternatively, save `gprm completion powershell` to a `.ps1` file and dot-source
 gprm                                         # restore the last session
 gprm --startup clipboard                     # start with PR links in the clipboard
 gprm --startup empty                         # start with an empty dashboard
-gprm --startup auto-discover                  # start with your open PRs
+gprm --startup auto-discover                  # discover open and recently closed PRs
 gprm --startup empty acme/api#42 acme/web#87   # explicit PRs only
 gprm --auto-quit all-passing --interval 10s
 gprm --auto-quit builds-finished acme/api#42
-gprm --auto-quit never
+gprm --auto-quit never                        # keep the dashboard open for review
+gprm --completed-retention forever           # keep completed PRs until dismissed
 gprm --demo                                  # animated, fully offline
 gprm --demo --once                           # printable demo snapshot
 gprm --once --startup clipboard              # one live refresh and summary
@@ -114,7 +116,7 @@ gprm --once --startup clipboard              # one live refresh and summary
 
 Flags can appear before or after PR references. Long options use two dashes (`--help`); short options use one (`-h`). Positional PRs are added to the selected startup mode. URLs can include `/files`, `/checks`, query strings, and fragments; they are normalized to the PR. `owner/repo#123` uses `github_host` from settings. Clipboard import extracts links from prose and Markdown and deduplicates them. `clipboard` startup reads once; press `v` to import again.
 
-Discovery uses your authenticated GitHub account and searches for authored, open PRs. It follows pages up to `discovery_limit` (100 by default, maximum 1000) and reports when the limit is reached. It runs on startup or when you press `d`, not on every refresh.
+Discovery uses your authenticated GitHub account and searches for authored open PRs plus PRs merged or closed within the retention window. Open PRs get priority under the combined `discovery_limit` (100 by default, maximum 1000). Results are deduplicated and manually dismissed PRs are skipped. With `forever` retention, discovery looks back 24 hours for newly completed PRs while already monitored completions stay indefinitely; `0s` disables discovery of completed PRs. The app reports when the discovery limit is reached. It runs on startup or when you press `d`, not on every refresh.
 
 ## Configuration
 
@@ -131,6 +133,7 @@ If you previously used `~/.config/gprm/config.toml`, rename it to `gprm_config.t
 ```toml
 startup = "restore"          # restore | clipboard | empty | auto-discover
 auto_quit = "all-closed"    # never | builds-finished | all-passing | all-closed
+completed_retention = "24h" # duration since closure | forever | 0s
 interval = "5s"
 request_timeout = "20s"
 sort = "repo"              # repo | progress
@@ -161,7 +164,7 @@ Repeat `[[jenkins]]` for more servers. The environment variables named by `user_
 
 Paths and arguments are separate: `clipboard = "/path with spaces/helper"` works; `clipboard = "helper --flag"` does not. Commands are executed directly, without a shell. Defaults are `pbpaste`/`pbcopy`/`open` on macOS, `wl-paste`/`wl-copy` or `xclip`/`xsel` and `xdg-open` on Linux, and PowerShell clipboard/rundll32 on Windows. Configure `clipboard_write` and `clipboard_write_args` separately from the clipboard reader; exported JSON is passed unchanged through stdin. For example, X11 copying uses `clipboard_write = "xclip"` with `clipboard_write_args = ["-selection", "clipboard", "-in"]`. Windows integrations are implemented but have not been tested on Windows. Manual paste into the `a` input works when no clipboard helper is available.
 
-CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `--sort` (`-s`), `--gh`, and `--no-color`. Use `--config` (`-c`) to select settings, `--help` (`-h`) for usage, and `--version` (`-V`) for the version. Single-dash long spellings such as `-help` are not accepted. Overrides affect the current run and do not rewrite your settings. Demo mode uses built-in defaults and CLI overrides; it ignores the config file.
+CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `--sort` (`-s`), `--gh`, `--completed-retention`, and `--no-color`. Use `--config` (`-c`) to select settings, `--help` (`-h`) for usage, and `--version` (`-V`) for the version. Single-dash long spellings such as `-help` are not accepted. Overrides affect the current run and do not rewrite your settings. Demo mode uses built-in defaults and CLI overrides; it ignores the config file.
 
 ## Exit modes
 
@@ -176,31 +179,43 @@ The full monitored list is used, even while filtered. An empty list never auto-q
 
 “All passing” covers all reported checks, not just branch-protection-required checks. No checks means waiting, even for a closed PR in a build-related mode. Polling cannot predict checks that a provider has not registered yet or reruns started after the last snapshot. Once a build-related mode exits, it cannot observe future reruns.
 
+## Completed PR retention
+
+Merged and closed PRs remain in the table for **24 hours after GitHub's merge/close timestamp** by default, independently of their CI result. Passing checks on an open PR do not start this timer. If GitHub omits the closure timestamp, the monitor uses the first time it observed the closure and persists that time across restarts. Expanded details show when a completed row will expire.
+
+Set `completed_retention = "forever"` to keep completed PRs until manually dismissed, or choose another Go duration such as `48h` or `168h`. `0s` hides completed rows at the next successful refresh. `--completed-retention` overrides the setting for one run. Expiration happens after a successful refresh so reopened PRs and snapshots with fetch errors are not discarded based on stale state.
+
+Press `x` to dismiss a row sooner. Dismissals are remembered by `restore`, `auto-discover`, and subsequent `d` discovery actions; a dismissed PR will not keep reappearing. Pasting or explicitly adding that PR again clears its dismissal (the configured retention window still applies). Expired and dismissed PRs remain in the current run's exit summary. Restoring or auto-discovering keeps previously monitored completed PRs until their retention expires; `empty` and `clipboard` start fresh sessions.
+
+Retention preserves dashboard rows and saved history; it **does not delay auto-quit**. The default `all-closed` mode still exits when every monitored PR is merged/closed, saving retained rows for the next launch. Use `--auto-quit never` (or `auto_quit = "never"`) when you want the dashboard to stay open so you can review completion.
+
 ## Keys
 
 | Key | Action |
 | --- | --- |
 | `v` / `Ctrl+V` | Add all PR links from the clipboard |
 | `a` | Type or paste one or more PR URLs or `owner/repo#123` references |
-| `d` | Add your open PRs |
+| `d` | Add your open and recently closed PRs |
 | `↑` / `k`, `↓` / `j` | Select a PR |
 | `PgUp`, `PgDn`, `g`, `G` | Page or jump to the first/last PR |
-| `Enter` / `Space`, `→`, `←` | Toggle, expand, or collapse the selected PR's details |
+| `Enter` / `Space` | Toggle inline PR details |
+| `→` | Focus the selected PR's details (expands them if needed) |
+| `←`, `Esc` | Leave details focus; in the table, `←` collapses details |
 | `Tab`, `Shift+Tab` | Next/previous CI check in the selected PR |
-| `[`, `]` | Scroll up/down through expanded details and long URLs |
+| `↑`, `↓`, `PgUp`, `PgDn`, `Home`, `End` | While details are focused: scroll, page, or jump to the start/end |
 | `y`, `Y` | Copy selected PR JSON or all PRs in the filtered table |
 | `c`, `C` | Copy gh requests for the selected PR, or curl requests for the selected Jenkins check |
-| `/`, `Esc` | Fuzzy filter; clear filter |
+| `/`, `Esc` | Fuzzy filter; clear filter when in table navigation |
 | `s`, `r` | Switch repository/progress sort; reverse direction |
 | `p`, `R` | Pause/resume; refresh immediately |
 | `o`, `b` | Open the selected PR or selected check's build URL |
-| `x` | Remove a PR from monitoring; retain it in this run's summary |
+| `x` | Dismiss a PR; remember the dismissal and keep it in this run's summary |
 | `?` | Show help |
 | `Q` / `q` / `Ctrl+C` | Quit and print the summary |
 
-The footer groups shortcuts under **PRs**, **Inspect**, **Copy**, and **Watch**, with separate keycaps and separators. The table grows with the terminal: branch appears from 140 columns and title from 190 columns, while repository and phase columns use the remaining width. Compact windows prioritize repository, progress, and status; `?` lists every shortcut.
+The footer groups shortcuts under **PRS**, **INSPECT**, **COPY**, and **WATCH**, with bold colored headings and keycaps, bright descriptions, and muted separators. With colors disabled, uppercase headings and separators preserve the grouping. The table grows with the terminal: branch appears from 140 columns and title from 190 columns, while repository and phase columns use the remaining width. Compact windows prioritize repository, progress, and status; `?` lists every shortcut.
 
-Press `Enter` to expand a PR beneath its table row. Details include source/target branches, author, draft state, review decision, mergeability, additions/deletions, file/commit/conversation-comment counts, timestamps, head commit, PR URL, and CI check details including the CI URL. These fields come from [GitHub's pull request API](https://docs.github.com/en/graphql/reference/pulls#pullrequest). Expansion is retained per PR while sorting and filtering, for the current run. Long text and URLs wrap; use `[` and `]` to scroll when details exceed the available height.
+Press `Enter` to expand a PR beneath its table row. Details include source/target branches, author, draft state, review decision, mergeability, additions/deletions, file/commit/conversation-comment counts, timestamps, head commit, PR URL, and CI check details including the CI URL. These fields come from [GitHub's pull request API](https://docs.github.com/en/graphql/reference/pulls#pullrequest). Expansion is retained per PR while sorting and filtering, for the current run. Long text and URLs wrap. Press `→` on a selected PR to focus its details; `↑`/`↓` then scroll the content, `PgUp`/`PgDn` move by a page, and `Home`/`End` jump to the start/end. The PR row stays visible above the details, with a line range and `↑ more` / `↓ more` indicators. Press `←` or `Esc` to return to table navigation without clearing your filter or collapsing the row. Focus stays with the same PR during sorting and refreshes. `/` always opens filtering.
 
 PR lifecycle is independent of CI success: merged and closed PRs take precedence in the status column and are counted separately in the header. Explicit GitHub merge/closure fields drive this state and the `all-closed` exit mode. Mergeability is shown as `n/a` after closure. Older PR metadata and responses that would revert a merged PR to open are flagged as stale instead of replacing the displayed snapshot.
 
@@ -243,7 +258,7 @@ Progress bars are red below 25%, orange from 25%, yellow from 50%, and green fro
 
 Sessions are written atomically, with permissions `0600`, to `~/.local/state/gprm/session.json` (or `$XDG_STATE_HOME/gprm/session.json`). `--state /path/to/session.json` allows separate named sessions. Use different state paths for concurrent monitors. A corrupt saved session produces an error instead of being overwritten during restore.
 
-`restore` keeps PRs, observed run history, and accumulated monitoring time. Other startup modes start a new session and replace the saved session. Removed PRs appear in the current exit summary but are not restored. The app checkpoints periodically and after changes, then saves again on normal quit, Ctrl+C, or SIGTERM.
+`restore` keeps PRs, observed run history, accumulated monitoring time, retention clocks, and dismissals. `auto-discover` keeps saved completed PRs and dismissals while discovering the current open/recently closed set. `empty` and `clipboard` start fresh sessions and replace the saved session. Dismissed and expired PR rows appear in the current exit summary but are not restored. The app checkpoints periodically and after changes, then saves again on normal quit, Ctrl+C, or SIGTERM.
 
 The summary includes each PR and CI job, distinct **observed** run counts, accumulated time monitored, and final PR/build status. Repeated polls of the same run do not increase the count. Counters persist through restoration and do not add time while the app is closed. Generic status providers that reuse a URL and expose no run identity cannot reliably distinguish reruns; counts are therefore observational, not a complete historical audit.
 

@@ -81,3 +81,22 @@ func TestConfigDefaultsAndOverrides(t *testing.T) {
 		t.Fatal("unknown key accepted")
 	}
 }
+
+func TestCompletedRetentionSettings(t *testing.T) {
+	c := Defaults()
+	if c.CompletedRetention != "24h" {
+		t.Fatal("unexpected retention default")
+	}
+	for _, v := range []string{"0s", "24h", "168h", "forever"} {
+		c.CompletedRetention = v
+		if err := c.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, v := range []string{"", "-1h", "24d", "nonsense"} {
+		c.CompletedRetention = v
+		if c.Validate() == nil {
+			t.Fatalf("accepted %q", v)
+		}
+	}
+}
