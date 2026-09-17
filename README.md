@@ -16,6 +16,10 @@ A keyboard-driven GitHub PR and build dashboard, styled after [kube-resource-mon
 - Mixed-provider sessions automatically show a CI column on wide terminals.
 - An offline demo that never touches your saved session or calls GitHub/Jenkins.
 
+<p align="center">
+  <img src="assets/gprm_demo.png" alt="demo screenshot of 'gprm --demo'" align="center" width="75%">
+</p>
+
 ## Build and install
 
 Requires Go 1.24.2 or later to build, and an installed, authenticated [GitHub CLI](https://cli.github.com/) for live monitoring. Jenkins uses Go's HTTP client; neither curl nor jq is needed for monitoring. Running a copied Jenkins request requires `curl` on your terminal's `PATH`.
