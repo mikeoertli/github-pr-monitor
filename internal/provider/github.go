@@ -49,7 +49,7 @@ func (g *GitHub) run(ctx context.Context, args ...string) ([]byte, error) {
 
 const query = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
  repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
-  title state headRefOid mergedAt headRefName baseRefName author { login }
+  title state headRefOid merged mergedAt closed closedAt headRefName baseRefName author { login }
   isDraft reviewDecision mergeable additions deletions changedFiles createdAt updatedAt
   comments { totalCount }
   commits(last:1) { totalCount nodes { commit { statusCheckRollup { contexts(first:100,after:$cursor) {
@@ -82,7 +82,8 @@ type contexts struct {
 }
 type gqlPR struct {
 	Title, State, HeadRefOID                            string
-	MergedAt                                            time.Time
+	MergedAt, ClosedAt                                  time.Time
+	Merged, Closed                                      bool
 	HeadRefName, BaseRefName, ReviewDecision, Mergeable string
 	Author                                              struct{ Login string }
 	IsDraft                                             bool
@@ -139,11 +140,23 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 			return p
 		}
 		p.Title, p.State, p.Head = core.Clean(raw.Title), raw.State, raw.HeadRefOID
+		// Merge is also a closure; merge facts take precedence over a stale state enum.
+		if raw.Merged || !raw.MergedAt.IsZero() {
+			p.State = "MERGED"
+		} else if raw.Closed {
+			p.State = "CLOSED"
+		}
+		if p.State != "OPEN" && p.State != "CLOSED" && p.State != "MERGED" {
+			p.Error = "invalid GitHub PR state"
+			return p
+		}
+		p.LastSuccess = time.Now()
 		p.Details = core.PRDetails{
 			Branch: core.Clean(raw.HeadRefName), BaseBranch: core.Clean(raw.BaseRefName), Author: core.Clean(raw.Author.Login),
 			Draft: raw.IsDraft, ReviewDecision: raw.ReviewDecision, Mergeable: raw.Mergeable,
 			Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles,
 			Commits: raw.Commits.TotalCount, Comments: raw.Comments.TotalCount, CreatedAt: raw.CreatedAt, UpdatedAt: raw.UpdatedAt,
+			MergedAt: raw.MergedAt, ClosedAt: raw.ClosedAt,
 		}
 		if len(raw.Commits.Nodes) == 0 || raw.Commits.Nodes[0].Commit.StatusCheckRollup == nil {
 			break
@@ -216,10 +229,14 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 		} else if g.Jenkins.Match(j) {
 			j.Provider = "Jenkins"
 			// Multiple GitHub contexts may report the same Jenkins build.
-			if jenkinsSeen[j.URL] {
+			canonical := j.URL
+			if root, err := jenkinsBuildRoot(j.URL); err == nil {
+				canonical = root
+			}
+			if jenkinsSeen[canonical] {
 				continue
 			}
-			jenkinsSeen[j.URL] = true
+			jenkinsSeen[canonical] = true
 			j = g.Jenkins.Enrich(ctx, j)
 		} else if n.CheckSuite.App.Slug == "github-actions" {
 			j = g.enrichActions(ctx, ref, j, runNumbers)

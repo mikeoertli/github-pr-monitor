@@ -63,6 +63,10 @@ func jenkinsServer(c config.Config, raw string) *config.Jenkins {
 	return nil
 }
 func jenkinsBuildRoot(raw string) (string, error) {
+	// Jenkins GitHub notifications commonly point at the Display URL plugin.
+	// Strip only its known suffix and then validate the numbered build path.
+	raw = strings.TrimRight(raw, "/")
+	raw = strings.TrimSuffix(raw, "/display/redirect")
 	u, err := url.Parse(raw)
 	if err != nil || core.BuildURLWarning(raw) != "" || !buildPath.MatchString(u.Path) || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("selected check has no direct Jenkins build URL; copy the gh command for its GitHub status")

@@ -134,6 +134,7 @@ type PRDetails struct {
 	ReviewDecision, Mergeable                             string
 	Additions, Deletions, ChangedFiles, Commits, Comments int
 	CreatedAt, UpdatedAt                                  time.Time
+	MergedAt, ClosedAt                                    time.Time
 }
 
 type PR struct {
@@ -160,6 +161,12 @@ func (p *PR) Apply(next PR, now time.Time) {
 	p.LastAttempt = now
 	if len(next.GitHubRequests) > 0 {
 		p.GitHubRequests = next.GitHubRequests
+	}
+	if next.Error == "" && !p.Details.UpdatedAt.IsZero() && !next.Details.UpdatedAt.IsZero() && next.Details.UpdatedAt.Before(p.Details.UpdatedAt) {
+		next.Error = "GitHub returned older PR data; retaining the last successful snapshot"
+	}
+	if next.Error == "" && p.State == "MERGED" && next.State != "MERGED" {
+		next.Error = "GitHub returned an inconsistent state for a merged PR; retaining the last successful snapshot"
 	}
 	if next.Error != "" {
 		p.Error = next.Error
@@ -189,7 +196,10 @@ func (p *PR) Apply(next PR, now time.Time) {
 	p.Details = next.Details
 	p.Error = ""
 	p.Fresh = true
-	p.LastSuccess = now
+	p.LastSuccess = next.LastSuccess
+	if p.LastSuccess.IsZero() {
+		p.LastSuccess = now
+	}
 	if p.History == nil {
 		p.History = map[string]Job{}
 	}

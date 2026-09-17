@@ -189,3 +189,38 @@ func TestCopyRequestMenuActions(t *testing.T) {
 		t.Fatal("command copy error hidden")
 	}
 }
+
+func TestMergedRowAndSourceDataTimes(t *testing.T) {
+	m := demoModel()
+	m.filter = "platform"
+	m.Config.NoColor = true
+	m.Update(tea.WindowSizeMsg{Width: 200, Height: 45})
+	p := &m.PRs[m.selected()]
+	p.State = "MERGED"
+	p.Details.Mergeable = "CONFLICTING"
+	p.Details.UpdatedAt = time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	p.Details.MergedAt = p.Details.UpdatedAt
+	p.LastSuccess = p.Details.UpdatedAt.Add(time.Hour)
+	p.LastAttempt = p.LastSuccess.Add(5 * time.Minute)
+	p.Jobs[0].Status = "passed"
+	p.Jobs[0].Number = "43"
+	m.expanded[p.Ref.URL] = true
+	view := m.View()
+	for _, want := range []string{"Mergeable: n/a (merged)", "State: merged", "GitHub data updated: " + stamp(p.Details.UpdatedAt), "Last successful data fetch: " + stamp(p.LastSuccess), "Merged: " + stamp(p.Details.MergedAt)} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("missing %q", want)
+		}
+	}
+	if strings.Contains(view, "CONFLICTING") {
+		t.Fatal("mergeability shown for merged PR")
+	}
+	row := m.tableRow(*p, true, m.columns())
+	if !strings.Contains(row, "merged") || !strings.Contains(row, "43") || strings.Contains(row, "passed") {
+		t.Fatal("table did not prioritize PR state or show build number")
+	}
+	p.Apply(core.PR{Error: "offline"}, p.LastAttempt)
+	view = m.View()
+	if !strings.Contains(view, "Last successful data fetch: "+stamp(p.LastSuccess)) || !strings.Contains(view, "Last attempt (failed): "+stamp(p.LastAttempt)) {
+		t.Fatal("failed attempt confused with data freshness")
+	}
+}

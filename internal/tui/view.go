@@ -228,9 +228,24 @@ func (m *Model) details(p core.PR, selected bool) []string {
 	add(p.Title)
 	add(fmt.Sprintf("Branch: %s → %s  ·  Author: %s  ·  Draft: %t", value(d.Branch), value(d.BaseBranch), value(d.Author), d.Draft))
 	add(fmt.Sprintf("Changes: +%d −%d · %d files · %d commits · %d comments", d.Additions, d.Deletions, d.ChangedFiles, d.Commits, d.Comments))
-	add(fmt.Sprintf("Review: %s · Mergeable: %s · State: %s", value(d.ReviewDecision), value(d.Mergeable), p.FinalStatus()))
-	add("Created: " + stamp(d.CreatedAt) + " · Updated: " + stamp(d.UpdatedAt))
-	add("Head: " + value(p.Head) + " · Last refresh: " + stamp(p.LastSuccess))
+	mergeable := value(d.Mergeable)
+	if p.State == "MERGED" || p.State == "CLOSED" {
+		mergeable = "n/a (" + strings.ToLower(p.State) + ")"
+	}
+	add(fmt.Sprintf("Review: %s · Mergeable: %s · State: %s", value(d.ReviewDecision), mergeable, p.FinalStatus()))
+	add("Created: " + stamp(d.CreatedAt) + " · GitHub data updated: " + stamp(d.UpdatedAt))
+	if !d.MergedAt.IsZero() {
+		add("Merged: " + stamp(d.MergedAt))
+	} else if !d.ClosedAt.IsZero() {
+		add("Closed: " + stamp(d.ClosedAt))
+	}
+	add("Head: " + value(p.Head))
+	add("Last successful data fetch: " + stamp(p.LastSuccess))
+	if p.Error != "" {
+		add("Last attempt (failed): " + stamp(p.LastAttempt) + " · Showing previous data")
+	} else if !p.Fresh {
+		add("Restored snapshot · awaiting a successful refresh")
+	}
 	add("PR URL: " + p.Ref.URL)
 	for _, issue := range p.Warnings() {
 		add("⚠ " + issue)
@@ -295,12 +310,17 @@ func (m *Model) View() (view string) {
 		dir = "↓"
 	}
 	add(m.paint(accent, state+" gprm") + m.paint(muted, fmt.Sprintf("%s  ·  every %s  ·  sort %s%s  ·  quit %s", demo, m.Config.Interval, m.Config.Sort, dir, m.Config.AutoQuit)))
-	count, passed, running, warnings := 0, 0, 0, 0
+	count, passed, running, warnings, merged, closed := 0, 0, 0, 0, 0, 0
 	for _, p := range m.PRs {
 		if p.Removed {
 			continue
 		}
 		count++
+		if p.State == "MERGED" {
+			merged++
+		} else if p.State == "CLOSED" {
+			closed++
+		}
 		if p.Status() == "passed" {
 			passed++
 		}
@@ -315,7 +335,7 @@ func (m *Model) View() (view string) {
 	if m.filter != "" {
 		filter = fmt.Sprintf(" · filter %q", core.Clean(m.filter))
 	}
-	add(m.paint(muted, fmt.Sprintf("%d PRs  ·  %d building  ·  %d passing  ·  %d warnings%s", count, running, passed, warnings, filter)))
+	add(m.paint(muted, fmt.Sprintf("%d PRs  ·  %d building  ·  %d passing  ·  %d merged  ·  %d closed  ·  %d warnings%s", count, running, passed, merged, closed, warnings, filter)))
 	add("")
 	cols := m.columns()
 	header := "      "

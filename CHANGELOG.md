@@ -2,6 +2,10 @@
 
 ## 0.2.0 — in progress
 
+- Accept Jenkins `/display/redirect` build links, populate build numbers before fetching, and normalize copied curl endpoints.
+- Respect explicit GitHub merge/closure facts, show lifecycle counts, and hide mergeability for closed PRs.
+- Distinguish source update times, successful data fetches, and failed attempts; reject older PR snapshots.
+
 - Add runnable gh and Jenkins curl request copying, preserving API sources and credential environment references.
 
 - Group footer shortcuts and size table columns to the terminal, with branch/title columns on wider screens.

@@ -42,11 +42,11 @@ func under(raw, base string) bool {
 	return strings.EqualFold(u.Scheme, b.Scheme) && strings.EqualFold(u.Host, b.Host) && (u.Path == strings.TrimRight(b.Path, "/") || strings.HasPrefix(u.Path, strings.TrimRight(b.Path, "/")+"/"))
 }
 func (j *Jenkins) Match(job core.Job) bool {
-	u, e := url.Parse(job.URL)
+	_, e := url.Parse(job.URL)
 	if e != nil {
 		return false
 	}
-	if job.Provider == "Jenkins" || buildPath.MatchString(u.Path) {
+	if _, err := jenkinsBuildRoot(job.URL); err == nil || job.Provider == "Jenkins" {
 		return true
 	}
 	for _, server := range j.Config.Jenkins {
@@ -146,7 +146,7 @@ func (j *Jenkins) estimate(ctx context.Context, raw string, b build) int64 {
 func (j *Jenkins) Enrich(ctx context.Context, job core.Job) core.Job {
 	raw, e := jenkinsBuildRoot(job.URL)
 	if e != nil {
-		job.Warning = "Jenkins detail URL is not a direct build URL; using GitHub status"
+		job.Warning = "Jenkins URL must identify a numbered build (optionally ending in /display/redirect); using GitHub status"
 		return job
 	}
 	job.JenkinsRequests = nil

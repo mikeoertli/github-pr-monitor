@@ -100,6 +100,26 @@ func TestHistoryRerunsAndMergeObservation(t *testing.T) {
 		t.Fatal("inferred historical merge")
 	}
 }
+
+func TestSnapshotTimesAndOutdatedResponses(t *testing.T) {
+	source := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
+	fetched := source.Add(time.Hour)
+	p := PR{State: "OPEN", Details: PRDetails{UpdatedAt: source}, LastSuccess: fetched, Fresh: true}
+	for _, next := range []PR{{Error: "offline"}, {State: "OPEN", Details: PRDetails{UpdatedAt: source.Add(-time.Minute)}}} {
+		p.Apply(next, fetched.Add(time.Minute))
+		if p.Fresh || p.Error == "" || !p.Details.UpdatedAt.Equal(source) || !p.LastSuccess.Equal(fetched) {
+			t.Fatal("failed/older response changed displayed data timestamps")
+		}
+	}
+	p.Apply(PR{State: "MERGED", Details: PRDetails{UpdatedAt: source.Add(time.Minute)}, LastSuccess: fetched.Add(2 * time.Minute)}, fetched.Add(3*time.Minute))
+	if p.State != "MERGED" || !p.Fresh || !p.LastSuccess.Equal(fetched.Add(2*time.Minute)) {
+		t.Fatal("successful merge snapshot not applied")
+	}
+	p.Apply(PR{State: "OPEN", Details: PRDetails{UpdatedAt: source.Add(2 * time.Minute)}}, fetched.Add(4*time.Minute))
+	if p.State != "MERGED" || p.Fresh || p.Error == "" {
+		t.Fatal("merged PR reverted to open")
+	}
+}
 func TestRestoreRefreshAndPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state", "session.json")
 	ref, _ := ParseRef("acme/api#1", "github.com")
