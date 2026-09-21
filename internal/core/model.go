@@ -292,7 +292,7 @@ func (p PR) FinalStatus() string {
 	return strings.ToLower(p.State)
 }
 
-// ShouldQuit deliberately examines every monitored PR, not the filtered view.
+// ShouldQuit examines every PR supplied by the caller's monitoring scope.
 // No-check and stale snapshots must not trigger build-related exits.
 func ShouldQuit(prs []PR, mode string) bool {
 	if mode == "never" {

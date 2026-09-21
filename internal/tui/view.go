@@ -47,7 +47,7 @@ func (m *Model) showCI() bool {
 		return false
 	}
 	seen := map[string]bool{}
-	for _, p := range m.PRs {
+	for _, p := range m.scopedPRs() {
 		if p.Removed {
 			continue
 		}
@@ -336,7 +336,7 @@ func (m *Model) View() (view string) {
 	}
 	add(m.paint(accent, state+" gprm") + m.paint(muted, fmt.Sprintf("%s  ·  every %s  ·  sort %s%s  ·  quit %s", demo, m.Config.Interval, m.Config.Sort, dir, m.Config.AutoQuit)))
 	count, passed, running, warnings, merged, closed := 0, 0, 0, 0, 0, 0
-	for _, p := range m.PRs {
+	for _, p := range m.scopedPRs() {
 		if p.Removed {
 			continue
 		}
@@ -491,7 +491,7 @@ JSON contains the latest displayed data and freshness/error fields.
 [Y] includes filtered rows outside the viewport, in table order.
 ~ estimated progress; ! overdue; — unknown. Red → green → orange/red.
 --no-color (or NO_COLOR) disables styling.
-Auto-quit considers all monitored PRs, including filtered-out rows.`
+Filtering limits displayed PRs, polling, and auto-quit; discovery is unchanged.`
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		lines = append(lines, ansi.Truncate(line, max(1, m.width), "…"))

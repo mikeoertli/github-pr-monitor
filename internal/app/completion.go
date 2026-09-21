@@ -32,6 +32,7 @@ func runCompletion(flags *pflag.FlagSet, args []string, out, stderr io.Writer) e
 		"startup":             {"restore", "clipboard", "empty", "auto-discover"},
 		"auto-quit":           {"never", "builds-finished", "all-passing", "all-closed"},
 		"sort":                {"repo", "progress"},
+		"filter":              {},
 		"interval":            {"1s", "5s", "10s", "30s", "1m"},
 		"completed-retention": {"24h", "48h", "168h", "forever", "0s"},
 	}

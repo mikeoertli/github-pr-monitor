@@ -47,17 +47,24 @@ func TestLayoutAndCIColumn(t *testing.T) {
 		t.Fatal("single provider column shown")
 	}
 }
-func TestFilterAndAutoQuitUseFullList(t *testing.T) {
+func TestFilterAndAutoQuitUseMatchingPRs(t *testing.T) {
 	m := demoModel()
 	if rows := core.Sorted(m.PRs, "plat", "repo", false); len(rows) != 1 || rows[0] != 0 {
 		t.Fatalf("filter leaked across fields: %v", rows)
 	}
 	m.Config.AutoQuit = "all-closed"
-	m.filter = "docs"
+	m.SetFilter("docs")
+	_, filteredQuit := m.Update(pollMsg{})
+	if filteredQuit == nil || m.QuitReason == "" {
+		t.Fatal("matching merged PR should allow auto-quit despite hidden open PRs")
+	}
+	m.QuitReason = ""
+	m.SetFilter("no-match")
 	m.Update(pollMsg{})
 	if m.QuitReason != "" {
-		t.Fatal("filtered view triggered quit")
+		t.Fatal("empty match set triggered quit")
 	}
+	m.SetFilter("")
 	for i := range m.PRs {
 		m.PRs[i].State = "MERGED"
 		m.PRs[i].Fresh = true

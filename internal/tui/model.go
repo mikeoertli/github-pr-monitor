@@ -37,6 +37,7 @@ type Model struct {
 	width, height, cursor, jobCursor            int
 	input                                       textinput.Model
 	mode, filter                                string
+	filterBeforeEdit                            string
 	help, busy, importing, paused, refreshAgain bool
 	notice                                      string
 	lastTick, lastPoll, lastSave                time.Time
@@ -67,18 +68,74 @@ func New(ctx context.Context, c config.Config, prs []core.PR, source Source, act
 	now := time.Now()
 	return &Model{Context: ctx, Config: c, PRs: prs, Source: source, Actions: actions, StatePath: state, Demo: demo, Started: now, lastTick: now, width: 120, height: 30, input: input, expanded: map[string]bool{}, Dismissed: map[string]core.Ref{}}
 }
+
+// SetFilter changes both the visible rows and the polling scope. PRs returning
+// to the scope must refresh before their saved status can trigger auto-quit.
+func (m *Model) SetFilter(filter string) {
+	if filter == m.filter {
+		return
+	}
+	before := map[int]bool{}
+	for _, i := range m.PollingRows() {
+		before[i] = true
+	}
+	m.account(time.Now())
+	m.filter = filter
+	m.cursor, m.jobCursor, m.detailScroll, m.scroll = 0, 0, 0, 0
+	m.detailFocus = ""
+	for _, i := range m.PollingRows() {
+		if !before[i] {
+			m.PRs[i].Fresh = false
+		}
+	}
+}
+
+// PollingRows uses the same matcher as the table, independently of discovery.
+func (m *Model) PollingRows() []int {
+	return core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
+}
+
+func (m *Model) scopedPRs() []core.PR {
+	var prs []core.PR
+	for _, i := range m.PollingRows() {
+		prs = append(prs, m.PRs[i])
+	}
+	return prs
+}
+
+// SummaryPRs includes dismissed/expired matching rows without exposing PRs
+// excluded by the filter. Filtering never removes them from the saved session.
+func (m *Model) SummaryPRs() []core.PR {
+	prs := append([]core.PR(nil), m.PRs...)
+	for i := range prs {
+		prs[i].Removed = false
+	}
+	var result []core.PR
+	for _, i := range core.Sorted(prs, m.filter, m.Config.Sort, m.Config.Descending) {
+		result = append(result, m.PRs[i])
+	}
+	return result
+}
+
+func (m *Model) refreshFilter() tea.Cmd {
+	if m.paused {
+		return nil
+	}
+	return m.poll()
+}
 func (m *Model) Init() tea.Cmd { return tea.Batch(tick(), m.poll()) }
 func tick() tea.Cmd            { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m *Model) poll() tea.Cmd {
+	if m.mode == "filter" {
+		return nil
+	}
 	if m.busy {
 		m.refreshAgain = true
 		return nil
 	}
 	refs := []core.Ref{}
-	for _, p := range m.PRs {
-		if !p.Removed {
-			refs = append(refs, p.Ref)
-		}
+	for _, i := range m.PollingRows() {
+		refs = append(refs, m.PRs[i].Ref)
 	}
 	if len(refs) == 0 {
 		return nil
@@ -159,7 +216,7 @@ func (m *Model) account(now time.Time) {
 	if d < 0 {
 		d = 0
 	}
-	for i := range m.PRs {
+	for _, i := range m.PollingRows() {
 		if !m.PRs[i].Removed {
 			m.PRs[i].Monitored += d
 			for _, j := range m.PRs[i].Jobs {
@@ -216,6 +273,7 @@ func (m *Model) startInput(mode string) tea.Cmd {
 	m.input.SetValue("")
 	m.input.Placeholder = "PR URLs or owner/repo#123 (multiple accepted)"
 	if mode == "filter" {
+		m.filterBeforeEdit = m.filter
 		m.input.SetValue(m.filter)
 		m.input.Placeholder = "fuzzy match repository, title, status, phase…"
 	}
@@ -263,7 +321,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.save()
 		}
 		var cmd tea.Cmd
-		if !m.paused && now.Sub(m.lastPoll) >= m.Config.PollInterval() && !m.busy {
+		if !m.paused && m.mode != "filter" && now.Sub(m.lastPoll) >= m.Config.PollInterval() && !m.busy {
 			cmd = m.poll()
 		}
 		return m, tea.Batch(tick(), cmd)
@@ -278,7 +336,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		quitReady := core.ShouldQuit(m.PRs, m.Config.AutoQuit)
+		quitReady := core.ShouldQuit(m.scopedPRs(), m.Config.AutoQuit)
 		m.ExpireCompleted(time.Now())
 		m.save()
 		if m.refreshAgain {
@@ -331,16 +389,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode != "" {
 			switch key {
 			case "esc":
+				filtering := m.mode == "filter"
+				if filtering {
+					m.SetFilter(m.filterBeforeEdit)
+				}
 				m.mode = ""
 				m.input.Blur()
+				if filtering {
+					return m, m.refreshFilter()
+				}
 				return m, nil
 			case "enter":
 				if m.mode == "filter" {
-					m.filter = m.input.Value()
-					m.cursor = 0
+					m.SetFilter(m.input.Value())
 					m.mode = ""
 					m.input.Blur()
-					return m, nil
+					return m, m.refreshFilter()
 				}
 				refs, err := core.ParseBatch(m.input.Value(), m.Config.GitHubHost)
 				if err != nil {
@@ -356,8 +420,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			m.input, cmd = m.input.Update(msg)
 			if m.mode == "filter" {
-				m.filter = m.input.Value()
-				m.cursor = 0
+				m.SetFilter(m.input.Value())
 			}
 			return m, cmd
 		}
@@ -415,8 +478,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			return m, m.startInput("filter")
 		case "esc":
-			m.filter = ""
+			m.SetFilter("")
 			m.notice = ""
+			return m, m.refreshFilter()
 		case "up", "k":
 			m.cursor = max(0, m.cursor-1)
 			m.jobCursor = 0

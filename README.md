@@ -108,6 +108,8 @@ gprm                                         # restore the last session
 gprm --startup clipboard                     # start with PR links in the clipboard
 gprm --startup empty                         # start with an empty dashboard
 gprm --startup auto-discover                  # discover open and recently closed PRs
+gprm -f api                                  # display and poll fuzzy matches for api
+gprm --startup auto-discover --filter "api #42" # discovery stays unrestricted
 gprm --startup empty acme/api#42 acme/web#87   # explicit PRs only
 gprm --auto-quit all-passing --interval 10s
 gprm --auto-quit builds-finished acme/api#42
@@ -119,6 +121,12 @@ gprm --once --startup clipboard              # one live refresh and summary
 ```
 
 Flags can appear before or after PR references. Long options use two dashes (`--help`); short options use one (`-h`). Positional PRs are added to the selected startup mode. URLs can include `/files`, `/checks`, query strings, and fragments; they are normalized to the PR. `owner/repo#123` uses `github_host` from settings. Clipboard import extracts links from prose and Markdown and deduplicates them. `clipboard` startup reads once; press `v` to import again.
+
+`-f` / `--filter` sets the initial fuzzy filter for both the dashboard and PR/CI polling, including `--once`. Matching is case-insensitive; each space-separated term must match a field (repository, PR number, title, branch, author, state, check name/provider, or phase). For example, `--filter "api #42"` combines a repository and PR-number match. The header counts, displayed CI column, and exit summary use the same filter. Saved PRs are preserved, and discovery still finds and saves its normal results.
+
+Press `/` to edit that same filter. Typing previews the rows; `Enter` applies it and refreshes matching PRs, while `Esc` in the editor restores the previous filter. `Esc` in table navigation clears it and resumes polling all PRs. Pausing still prevents automatic refreshes. Requests already in progress may finish after a filter change; the next batch uses the new filter. PRs re-entering the filter must refresh successfully before they can trigger auto-quit.
+
+Matching uses locally available data: repository names and PR numbers are known immediately; titles, branches, authors, and CI details require a previous fetch. An unmatched PR is not fetched just to learn whether its unknown fields would match. Clear the filter to populate that data, or use a repository/number filter on a fresh session. Filters on changing fields such as status stop polling a PR once its last fetched data no longer matches. The filter is per invocation and is not saved in the config or session.
 
 Discovery uses your authenticated GitHub account and searches for authored open PRs plus PRs merged or closed within the retention window. Open PRs get priority under the combined `discovery_limit` (100 by default, maximum 1000). Results are deduplicated and manually dismissed PRs are skipped. With `forever` retention, discovery looks back 24 hours for newly completed PRs while already monitored completions stay indefinitely; `0s` disables discovery of completed PRs. The app reports when the discovery limit is reached. It runs on startup or when you press `d`, not on every refresh.
 
@@ -179,7 +187,7 @@ CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `-
 | `all-passing` | Has at least one check and all currently reported checks are successful, neutral, or skipped. |
 | `all-closed` (default) | Is merged or closed, independently of CI results or running jobs. |
 
-The full monitored list is used, even while filtered. An empty list never auto-quits. Restored state must be refreshed before it can cause an exit. A GitHub polling error blocks all automatic exits; a Jenkins build polling error blocks the build-related exit modes. Missing optional stage/step details do not override an authoritative build/check result. Pausing prevents auto-quit, and adding/importing PRs postpones it until a subsequent refresh.
+Auto-quit considers only PRs matching the active filter. With no filter, it considers the full monitored list. An empty match set never auto-quits. Restored state must be refreshed before it can cause an exit. A GitHub polling error blocks all automatic exits; a Jenkins build polling error blocks the build-related exit modes. Missing optional stage/step details do not override an authoritative build/check result. Pausing prevents auto-quit, and adding/importing PRs postpones it until a subsequent refresh.
 
 “All passing” covers all reported checks, not just branch-protection-required checks. No checks means waiting, even for a closed PR in a build-related mode. Polling cannot predict checks that a provider has not registered yet or reruns started after the last snapshot. Once a build-related mode exits, it cannot observe future reruns.
 

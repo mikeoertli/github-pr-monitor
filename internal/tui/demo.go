@@ -17,7 +17,15 @@ func DemoPRs() []core.PR {
 }
 func DemoSnapshots(refs []core.Ref, step int) []core.PR {
 	var prs []core.PR
+	fixtures := DemoPRs()
 	for i, ref := range refs {
+		// Keep each example stable when filtering or sorting changes request order.
+		for slot, fixture := range fixtures {
+			if fixture.Ref.URL == ref.URL {
+				i = slot
+				break
+			}
+		}
 		progress := min(.96, .20+float64((step+i*3)%20)*.035)
 		job := core.Job{Key: "Jenkins/build", RunID: "build-42", Name: "Build and test", Provider: "Jenkins", Number: "42", URL: "https://ci.example.com/job/platform/42/", Status: "running", Phase: "Integration tests", Progress: progress, Estimated: true, StartedAt: time.Now().Add(-time.Duration(progress*600) * time.Second)}
 		job.ExpectedDuration = 10 * time.Minute

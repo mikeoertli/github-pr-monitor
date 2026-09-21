@@ -32,6 +32,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	quit := flags.StringP("auto-quit", "q", "", "never | builds-finished | all-passing | all-closed")
 	retention := flags.String("completed-retention", "", "keep merged/closed PRs for a duration (24h), forever, or 0s")
 	interval := flags.StringP("interval", "i", "", "status refresh interval, e.g. 5s")
+	filter := flags.StringP("filter", "f", "", "fuzzy filter for displayed and polled PRs")
 	sortBy := flags.StringP("sort", "s", "", "repo | progress")
 	gh := flags.String("gh", "", "gh executable path")
 	demo := flags.Bool("demo", false, "offline demo (does not read or write your session)")
@@ -186,6 +187,7 @@ func Run(args []string, out, stderr io.Writer) error {
 		}
 	}
 	m := tui.New(ctx, c, prs, source, actions, *statePath, *demo)
+	m.SetFilter(*filter)
 	for _, ref := range saved.Dismissed {
 		m.Dismissed[strings.ToLower(ref.URL)] = ref
 	}
@@ -194,29 +196,30 @@ func Run(args []string, out, stderr io.Writer) error {
 	}
 	if *once {
 		start := time.Now()
+		rows := m.PollingRows()
 		if *demo {
 			refs := []core.Ref{}
-			for _, p := range prs {
-				refs = append(refs, p.Ref)
+			for _, i := range rows {
+				refs = append(refs, m.PRs[i].Ref)
 			}
-			for i, p := range tui.DemoSnapshots(refs, 1) {
-				m.PRs[i].Apply(p, time.Now())
+			for n, p := range tui.DemoSnapshots(refs, 1) {
+				m.PRs[rows[n]].Apply(p, time.Now())
 			}
 		} else {
-			for i, p := range prs {
-				m.PRs[i].Apply(source.Fetch(ctx, p.Ref), time.Now())
+			for _, i := range rows {
+				m.PRs[i].Apply(source.Fetch(ctx, m.PRs[i].Ref), time.Now())
 			}
 		}
 		m.ExpireCompleted(time.Now())
 		m.Finish()
 		fmt.Fprintln(out, m.View())
 		fmt.Fprintln(out)
-		fmt.Fprint(out, core.Summary(m.PRs, time.Since(start)))
+		fmt.Fprint(out, core.Summary(m.SummaryPRs(), time.Since(start)))
 		if m.SaveError != nil {
 			return fmt.Errorf("save session: %w", m.SaveError)
 		}
-		for _, p := range m.PRs {
-			if p.Error != "" {
+		for _, i := range rows {
+			if m.PRs[i].Error != "" {
 				return fmt.Errorf("one or more PRs could not be refreshed")
 			}
 		}
@@ -235,7 +238,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	}()
 	_, err = program.Run()
 	m.Finish()
-	fmt.Fprintln(out, core.Summary(m.PRs, time.Since(m.Started)))
+	fmt.Fprintln(out, core.Summary(m.SummaryPRs(), time.Since(m.Started)))
 	if m.QuitReason != "" {
 		fmt.Fprintln(out, m.QuitReason)
 	}

@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.3.2 — in progress
+## 0.4.0 — in progress
+
+- Add `-f` / `--filter` to select displayed and polled PRs using fuzzy matching, without restricting discovery.
+- Share the filter with `/` editing, apply it to `--once`, summaries, and auto-quit, and retain excluded PRs in the saved session.
+
+## 0.3.2 — 2026-09-21
 
 - Resolve Jenkins report links to their numbered build, including coverage paths and test-page query parameters.
 - Deduplicate reports with their parent build for polling/progress, preferring the build overview for GitHub fallback status.
