@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.3.1 — in progress
+## 0.3.2 — in progress
+
+- Resolve Jenkins report links to their numbered build, including coverage paths and test-page query parameters.
+- Deduplicate reports with their parent build for polling/progress, preferring the build overview for GitHub fallback status.
+
+## 0.3.1 — 2026-09-17
 
 - Close focused details and return to the table with a single Left or Esc press.
 

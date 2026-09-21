@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,9 +13,9 @@ import (
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
 )
 
-func TestDisplayRedirectBuildURLs(t *testing.T) {
+func TestJenkinsBuildAndReportURLs(t *testing.T) {
 	root := "https://ci.example.com/jenkins/job/platform/job/feature%2Fwork/43"
-	for _, suffix := range []string{"", "/", "/display/redirect", "/display/redirect/"} {
+	for _, suffix := range []string{"", "/", "/display/redirect", "/display/redirect/", "/display/redirect?page=tests", "/display/redirect/?page=coverage#summary", "//coverage", "/coverage/", "/testReport/package/class/17/", "/artifact/results/12/index.html", "/?view=summary#result", "/display/redirect?url=https%3A%2F%2Felsewhere.example.com"} {
 		got, err := jenkinsBuildRoot(root + suffix)
 		if err != nil || got != root {
 			t.Fatalf("normalization: %q %v", got, err)
@@ -41,7 +42,7 @@ func TestDisplayRedirectBuildURLs(t *testing.T) {
 		}
 		for _, toCopy := range []core.Job{job, gotJob} {
 			command, err := JenkinsCommand(config.Defaults(), toCopy)
-			if err != nil || !strings.Contains(command, root+"/api/json") || strings.Contains(command, "display/redirect") {
+			if err != nil || !strings.Contains(command, root+"/api/json") || strings.Contains(command, "display/redirect") || strings.Contains(command, "/coverage") || strings.Contains(command, "page=") || strings.Contains(command, "elsewhere.example.com") {
 				t.Fatalf("bad copied command: %v", err)
 			}
 		}
@@ -51,9 +52,23 @@ func TestDisplayRedirectBuildURLs(t *testing.T) {
 			t.Fatal("failed lookup lost URL-derived build number")
 		}
 	}
-	for _, suffix := range []string{"/display/redirect/extra", "/display/redirect?url=other", "/display/redirect#fragment", "/display/redirect/display/redirect"} {
-		if _, err := jenkinsBuildRoot(root + suffix); err == nil {
-			t.Fatalf("accepted ambiguous build URL %s", suffix)
+	for _, raw := range []string{
+		"https://ci.example.com/job/api/",
+		"https://ci.example.com/job/api/lastBuild/coverage",
+		"https://ci.example.com/job/api/coverage/17/",
+		"https://ci.example.com/job/api/0/coverage",
+		"https://ci.example.com/job/api/43x/coverage",
+		"https://ci.example.com/job//43/coverage",
+		"https://ci.example.com/job/api/43/../coverage",
+		"https://ci.example.com/job/%2e%2e/43/coverage",
+		"https://ci.example.com/job/api/43/%2e%2e/coverage",
+		"https://ci.example.com/job/api/43/%invalid",
+		"https://user:secret@ci.example.com/job/api/43/coverage",
+		"file:///job/api/43/coverage",
+		"https://ci.example.com/blue/organizations/jenkins/api/43",
+	} {
+		if _, err := jenkinsBuildRoot(raw); err == nil {
+			t.Fatal("accepted invalid or non-build URL")
 		}
 	}
 }
@@ -75,6 +90,69 @@ func TestGitHubDeduplicatesDirectAndDisplayLinks(t *testing.T) {
 	p := g.Fetch(context.Background(), ref)
 	if p.Error != "" || len(p.Jobs) != 1 || p.Jobs[0].Number != "43" || calls != 2 {
 		t.Fatalf("duplicate normalized build: %+v, calls %d", p, calls)
+	}
+}
+
+func TestGitHubGroupsJenkinsReportsWithRunningBuild(t *testing.T) {
+	for _, overview := range []string{"/", "/display/redirect"} {
+		for _, offline := range []bool{false, true} {
+			for _, reportFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("overview=%s/offline=%t/reportFirst=%t", overview, offline, reportFirst), func(t *testing.T) {
+					g := New(config.Defaults())
+					ref, _ := core.ParseRef("acme/api#1", "github.com")
+					root := "https://ci.example.com/jenkins/job/team/job/api/job/PR-1/43"
+					build := map[string]any{"__typename": "StatusContext", "id": "build", "context": "Build", "state": "PENDING", "targetUrl": root + overview}
+					coverage := check("coverage", "Coverage", "COMPLETED")
+					coverage["detailsUrl"] = root + "//coverage"
+					tests := check("tests", "Tests", "COMPLETED")
+					tests["detailsUrl"] = root + "/display/redirect?page=tests"
+					nodes := []map[string]any{build, coverage, tests}
+					if reportFirst {
+						nodes = []map[string]any{coverage, tests, build}
+					}
+					g.Runner = runnerFunc(func(context.Context, string, ...string) ([]byte, error) {
+						return graph("head", "OPEN", nodes, false, ""), nil
+					})
+					var requests []string
+					g.Jenkins.Client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						requests = append(requests, req.URL.String())
+						if offline {
+							return response(503, `{}`), nil
+						}
+						switch req.URL.String() {
+						case root + "/api/json":
+							return response(200, fmt.Sprintf(`{"number":43,"building":true,"timestamp":%d,"estimatedDuration":600000}`, time.Now().Add(-3*time.Minute).UnixMilli())), nil
+						case estimateURL(root):
+							return response(200, `{"duration":600000}`), nil
+						case root + "/wfapi/describe":
+							return response(200, `{"stages":[{"name":"Integration tests","status":"IN_PROGRESS"}]}`), nil
+						default:
+							t.Fatalf("unexpected API request %s", req.URL.String())
+							return nil, nil
+						}
+					})
+					p := g.Fetch(context.Background(), ref)
+					if p.Error != "" || len(p.Jobs) != 1 {
+						t.Fatalf("report links produced duplicate builds: %+v", p)
+					}
+					job := p.Jobs[0]
+					wantStatus := "running"
+					if offline {
+						wantStatus = "queued"
+					}
+					if job.Name != "Build" || job.Number != "43" || job.Status != wantStatus || job.RunID != root || job.URL != root+"/" {
+						t.Fatalf("lost parent build identity/status: %+v", job)
+					}
+					if offline {
+						if len(requests) != 1 || !job.Stale || !strings.Contains(job.Warning, "503") {
+							t.Fatal("unavailable Jenkins build must retain its pending GitHub fallback and warning")
+						}
+					} else if len(requests) != 3 || job.Warning != "" || job.Phase != "Integration tests" || p.Progress() < .29 || p.Progress() > .31 {
+						t.Fatalf("duplicate reports inflated progress or triggered warnings: %+v, requests %v", job, requests)
+					}
+				})
+			}
+		}
 	}
 }
 

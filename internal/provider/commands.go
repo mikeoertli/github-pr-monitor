@@ -63,15 +63,55 @@ func jenkinsServer(c config.Config, raw string) *config.Jenkins {
 	return nil
 }
 func jenkinsBuildRoot(raw string) (string, error) {
-	// Jenkins GitHub notifications commonly point at the Display URL plugin.
-	// Strip only its known suffix and then validate the numbered build path.
-	raw = strings.TrimRight(raw, "/")
-	raw = strings.TrimSuffix(raw, "/display/redirect")
+	invalid := fmt.Errorf("selected check has no numbered Jenkins build URL; copy the gh command for its GitHub status")
 	u, err := url.Parse(raw)
-	if err != nil || core.BuildURLWarning(raw) != "" || !buildPath.MatchString(u.Path) || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("selected check has no direct Jenkins build URL; copy the gh command for its GitHub status")
+	if err != nil || core.BuildURLWarning(raw) != "" {
+		return "", invalid
 	}
-	return strings.TrimRight(raw, "/"), nil
+	// Split the escaped path so a multibranch job name containing %2F stays
+	// one segment. Reports, query parameters, and fragments are not API roots.
+	parts := strings.Split(u.EscapedPath(), "/")
+	firstJob := -1
+	for i, part := range parts {
+		decoded, err := url.PathUnescape(part)
+		if err != nil || decoded == "." || decoded == ".." {
+			return "", invalid
+		}
+		if firstJob < 0 && part == "job" {
+			firstJob = i
+		}
+	}
+	if firstJob < 0 {
+		return "", invalid
+	}
+	i := firstJob
+	for i+1 < len(parts) && parts[i] == "job" && parts[i+1] != "" {
+		i += 2
+	}
+	if i >= len(parts) || parts[i] == "" || strings.Trim(parts[i], "0123456789") != "" {
+		return "", invalid
+	}
+	number, err := strconv.Atoi(parts[i])
+	if err != nil || number < 1 {
+		return "", invalid
+	}
+	// Only the /job/<name> hierarchy determines the build number. Numbers in
+	// report paths must never be mistaken for another run.
+	u.RawPath = strings.Join(parts[:i+1], "/")
+	u.Path, _ = url.PathUnescape(u.RawPath)
+	u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = "", "", "", false
+	return u.String(), nil
+}
+
+// Prefer a build overview over a report's GitHub status when Jenkins is offline.
+func jenkinsOverview(raw, root string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Query().Get("page") != "" {
+		return false
+	}
+	u.RawQuery, u.Fragment, u.RawFragment, u.ForceQuery = "", "", "", false
+	base := strings.TrimRight(u.String(), "/")
+	return base == root || base == root+"/display/redirect"
 }
 func estimateURL(raw string) string {
 	return raw[:strings.LastIndex(raw, "/")] + "/lastSuccessfulBuild/api/json"

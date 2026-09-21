@@ -146,7 +146,7 @@ func (j *Jenkins) estimate(ctx context.Context, raw string, b build) int64 {
 func (j *Jenkins) Enrich(ctx context.Context, job core.Job) core.Job {
 	raw, e := jenkinsBuildRoot(job.URL)
 	if e != nil {
-		job.Warning = "Jenkins URL must identify a numbered build (optionally ending in /display/redirect); using GitHub status"
+		job.Warning = "Jenkins URL must identify a numbered build or a report within one; using GitHub status"
 		return job
 	}
 	job.JenkinsRequests = nil

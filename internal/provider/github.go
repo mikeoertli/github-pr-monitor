@@ -219,7 +219,18 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 			latest[key] = n
 		}
 	}
-	jenkinsSeen := map[string]bool{}
+	// Group report links with their build before fetching. The overview's
+	// GitHub status is the fallback even if a completed report appears first.
+	jenkinsChecks := map[string]string{}
+	for _, key := range order {
+		job := jobFromNode(latest[key], p.Head)
+		if root, err := jenkinsBuildRoot(job.URL); err == nil && g.Jenkins.Match(job) {
+			previous, exists := jenkinsChecks[root]
+			if !exists || (jenkinsOverview(job.URL, root) && !jenkinsOverview(jobFromNode(latest[previous], p.Head).URL, root)) {
+				jenkinsChecks[root] = key
+			}
+		}
+	}
 	runNumbers := map[string]string{}
 	for _, key := range order {
 		n := latest[key]
@@ -229,14 +240,9 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 		} else if g.Jenkins.Match(j) {
 			j.Provider = "Jenkins"
 			// Multiple GitHub contexts may report the same Jenkins build.
-			canonical := j.URL
-			if root, err := jenkinsBuildRoot(j.URL); err == nil {
-				canonical = root
-			}
-			if jenkinsSeen[canonical] {
+			if root, err := jenkinsBuildRoot(j.URL); err == nil && jenkinsChecks[root] != key {
 				continue
 			}
-			jenkinsSeen[canonical] = true
 			j = g.Jenkins.Enrich(ctx, j)
 		} else if n.CheckSuite.App.Slug == "github-actions" {
 			j = g.enrichActions(ctx, ref, j, runNumbers)
