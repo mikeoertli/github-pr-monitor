@@ -50,7 +50,7 @@ func (g *GitHub) run(ctx context.Context, args ...string) ([]byte, error) {
 const query = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
  repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
   title state headRefOid merged mergedAt closed closedAt headRefName baseRefName author { login }
-  isDraft reviewDecision mergeable additions deletions changedFiles createdAt updatedAt
+  isDraft reviewDecision mergeable mergeStateStatus additions deletions changedFiles createdAt updatedAt
   comments { totalCount }
   commits(last:1) { totalCount nodes { commit { statusCheckRollup { contexts(first:100,after:$cursor) {
    pageInfo { hasNextPage endCursor }
@@ -81,16 +81,16 @@ type contexts struct {
 	}
 }
 type gqlPR struct {
-	Title, State, HeadRefOID                            string
-	MergedAt, ClosedAt                                  time.Time
-	Merged, Closed                                      bool
-	HeadRefName, BaseRefName, ReviewDecision, Mergeable string
-	Author                                              struct{ Login string }
-	IsDraft                                             bool
-	Additions, Deletions, ChangedFiles                  int
-	CreatedAt, UpdatedAt                                time.Time
-	Comments                                            struct{ TotalCount int }
-	Commits                                             struct {
+	Title, State, HeadRefOID                                              string
+	MergedAt, ClosedAt                                                    time.Time
+	Merged, Closed                                                        bool
+	HeadRefName, BaseRefName, ReviewDecision, Mergeable, MergeStateStatus string
+	Author                                                                struct{ Login string }
+	IsDraft                                                               bool
+	Additions, Deletions, ChangedFiles                                    int
+	CreatedAt, UpdatedAt                                                  time.Time
+	Comments                                                              struct{ TotalCount int }
+	Commits                                                               struct {
 		TotalCount int
 		Nodes      []struct {
 			Commit struct{ StatusCheckRollup *struct{ Contexts contexts } }
@@ -153,7 +153,7 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 		p.LastSuccess = time.Now()
 		p.Details = core.PRDetails{
 			Branch: core.Clean(raw.HeadRefName), BaseBranch: core.Clean(raw.BaseRefName), Author: core.Clean(raw.Author.Login),
-			Draft: raw.IsDraft, ReviewDecision: raw.ReviewDecision, Mergeable: raw.Mergeable,
+			Draft: raw.IsDraft, ReviewDecision: raw.ReviewDecision, Mergeable: raw.Mergeable, MergeStateStatus: raw.MergeStateStatus,
 			Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles,
 			Commits: raw.Commits.TotalCount, Comments: raw.Comments.TotalCount, CreatedAt: raw.CreatedAt, UpdatedAt: raw.UpdatedAt,
 			MergedAt: raw.MergedAt, ClosedAt: raw.ClosedAt,

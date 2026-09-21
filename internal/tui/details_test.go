@@ -161,7 +161,7 @@ func TestCopyRequestMenuActions(t *testing.T) {
 	m.filter = "platform"
 	var copied string
 	m.Actions.Copy = func(_ context.Context, text string) error { copied = text; return nil }
-	for _, tc := range []struct{ key, want, label string }{{"c", "'api' 'graphql'", "gh request command"}, {"C", "/api/json", "Jenkins curl request commands"}} {
+	for _, tc := range []struct{ key, want, label string }{{"c", "pr view ", "gh pr view command"}, {"C", "/api/json", "Jenkins curl command"}} {
 		_, cmd := m.Update(key(tc.key))
 		if cmd == nil {
 			t.Fatal(m.notice)

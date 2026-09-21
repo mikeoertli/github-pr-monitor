@@ -76,7 +76,7 @@ func commandHarness(t *testing.T) (string, func(string, string) [][]string) {
 	}
 }
 
-func TestCopiedGitHubCommandsReplayRequests(t *testing.T) {
+func TestCopiedGitHubCommandUsesPRView(t *testing.T) {
 	bin, run := commandHarness(t)
 	c := config.Defaults()
 	c.Tools.GH = bin
@@ -95,16 +95,20 @@ func TestCopiedGitHubCommandsReplayRequests(t *testing.T) {
 		t.Fatal("requests were not recorded")
 	}
 	command := GitHubCommand(c, p)
+	want := [][]string{{"pr", "view", ref.URL, "--json", prViewFields}}
+	if strings.Contains(command, "graphql") || strings.Contains(command, "GH_PROMPT_DISABLED") || strings.Count(strings.TrimSpace(command), "\n") != 0 {
+		t.Fatal("copied gh command is not a simple single command")
+	}
 	for _, shell := range []string{"/bin/sh", "/bin/bash", "/bin/zsh"} {
 		if _, err := os.Stat(shell); err != nil {
 			continue
 		}
-		if got := run(shell, command); !reflect.DeepEqual(got, actual) {
+		if got := run(shell, command); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s changed gh arguments", shell)
 		}
 	}
-	if got := run("/bin/sh", GitHubCommand(c, core.NewPR(ref, p.LastSuccess))); !reflect.DeepEqual(got, [][]string{githubArgs(ref, "")}) {
-		t.Fatal("pre-refresh command differs from monitor query")
+	if got := run("/bin/sh", GitHubCommand(c, core.NewPR(ref, p.LastSuccess))); !reflect.DeepEqual(got, want) {
+		t.Fatal("pre-refresh command differs from PR view")
 	}
 }
 
@@ -117,11 +121,11 @@ func argValue(args []string, key string) string {
 	return ""
 }
 
-func TestCopiedCurlCredentialsAndSourceRequests(t *testing.T) {
+func TestCopiedCurlSingleBuildRequestAndCredentials(t *testing.T) {
 	_, run := commandHarness(t)
 	c := config.Defaults()
 	c.Timeout = "7s"
-	c.Jenkins = []config.Jenkins{{URL: "https://ci.example.com/jenkins", User: "inline ' user", Token: "token'\"$() `literal`\nend", UserEnv: "GPRM_COPY_USER", TokenEnv: "GPRM_COPY_TOKEN"}}
+	c.Jenkins = []config.Jenkins{{URL: "https://ci.example.com/jenkins", User: "inline ' user", Token: "token'\"$() `literal` } \nend", UserEnv: "GPRM_COPY_USER", TokenEnv: "GPRM_COPY_TOKEN"}}
 	job := core.Job{Provider: "Jenkins", URL: "https://ci.example.com/jenkins/job/a/8/", Status: "running"}
 	job.JenkinsRequests = []string{job.URL + "api/json", estimateURL(strings.TrimRight(job.URL, "/")), job.URL + "wfapi/describe", "https://ci.example.com/outside/api/json"}
 	for _, env := range []bool{false, true} {
@@ -143,14 +147,14 @@ func TestCopiedCurlCredentialsAndSourceRequests(t *testing.T) {
 				continue
 			}
 			calls := run(shell, command)
-			if len(calls) != len(job.JenkinsRequests) {
-				t.Fatal("missing source request")
+			if len(calls) != 1 {
+				t.Fatal("expected one build request")
 			}
 			j := NewJenkins(c)
-			for i, args := range calls {
-				endpoint := job.JenkinsRequests[i]
-				if argValue(args, "--url") != endpoint || argValue(args, "--max-time") != "7" || argValue(args, "--header") != "Accept: application/json" || args[0] != "--disable" {
-					t.Fatal("curl differs from request settings")
+			for _, args := range calls {
+				endpoint := job.URL + "api/json"
+				if args[len(args)-1] != endpoint || args[0] != "-s" {
+					t.Fatal("curl does not target the selected build")
 				}
 				j.Client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 					u, p, auth := req.BasicAuth()
@@ -158,7 +162,7 @@ func TestCopiedCurlCredentialsAndSourceRequests(t *testing.T) {
 					if auth {
 						want = u + ":" + p
 					}
-					if argValue(args, "--user") != want {
+					if argValue(args, "-u") != want {
 						t.Fatal("curl authentication differs from HTTP client")
 					}
 					return response(200, `{}`), nil
@@ -168,6 +172,17 @@ func TestCopiedCurlCredentialsAndSourceRequests(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+		}
+	}
+	c.Jenkins[0].User, c.Jenkins[0].Token = "", ""
+	command, err := JenkinsCommand(c, job)
+	if err != nil || command != "curl -s -u \"$GPRM_COPY_USER:$GPRM_COPY_TOKEN\" "+job.URL+"api/json\n" {
+		t.Fatalf("unexpected simple curl command: %q (%v)", command, err)
+	}
+	for _, raw := range []string{"https://other.example.com/jenkins/job/a/8/", "https://ci.example.com/elsewhere/job/a/8/"} {
+		command, err := JenkinsCommand(c, core.Job{Provider: "Jenkins", URL: raw})
+		if err != nil || command != "curl -s "+raw+"api/json\n" {
+			t.Fatal("credentials escaped the configured server scope")
 		}
 	}
 	c.Jenkins[0].UserEnv = "BAD;exit"

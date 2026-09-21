@@ -208,3 +208,18 @@ func TestGitHubMergeFactsAndSourceTimestamps(t *testing.T) {
 		})
 	}
 }
+
+func TestGitHubNoChecksUsesMergeState(t *testing.T) {
+	g := New(config.Defaults())
+	ref, _ := core.ParseRef("acme/docs#42", "github.com")
+	g.Runner = runnerFunc(func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if !strings.Contains(strings.Join(args, " "), "mergeStateStatus") {
+			t.Fatal("query omitted merge state")
+		}
+		return []byte(`{"data":{"repository":{"pullRequest":{"title":"Update guide","state":"OPEN","headRefOid":"head","mergeable":"CONFLICTING","mergeStateStatus":"DIRTY","commits":{"totalCount":1,"nodes":[{"commit":{"statusCheckRollup":null}}]}}}}}`), nil
+	})
+	p := g.Fetch(context.Background(), ref)
+	if p.Error != "" || len(p.Jobs) != 0 || p.Status() != "conflicts" || p.Details.MergeStateStatus != "DIRTY" {
+		t.Fatalf("no-check merge state was lost: %+v", p)
+	}
+}

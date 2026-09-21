@@ -62,6 +62,9 @@ func progressColor(p core.PR, now time.Time) (string, bool) {
 }
 
 func (m *Model) bar(p core.PR, estimated bool, now time.Time) string {
+	if len(p.Jobs) == 0 {
+		return m.paint(muted, "—")
+	}
 	tone, overdue := progressColor(p, now)
 	style := map[string]lipgloss.Style{"red": bad, "orange": orange, "yellow": warn, "green": good, "muted": muted}[tone]
 	progress := p.Progress()

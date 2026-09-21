@@ -154,7 +154,13 @@ func (m *Model) columns() []column {
 	return cols
 }
 func (m *Model) tableRow(p core.PR, selected bool, cols []column) string {
-	build, phase := "—", "Waiting for checks"
+	build, phase := "—", "Loading PR status"
+	if p.Fresh && len(p.Jobs) == 0 {
+		_, readiness := p.MergeReadiness()
+		phase = "No CI checks · " + readiness
+	} else if p.Error != "" {
+		phase = "PR status unavailable"
+	}
 	if j := primaryJob(p); j != nil {
 		build, phase = value(j.Number), j.Phase
 	}
@@ -168,11 +174,11 @@ func (m *Model) tableRow(p core.PR, selected bool, cols []column) string {
 	}
 	color := muted
 	switch status {
-	case "passed", "merged":
+	case "passed", "merged", "mergeable":
 		color = good
-	case "failed", "stale":
+	case "failed", "stale", "conflicts":
 		color = bad
-	case "building":
+	case "building", "blocked", "behind", "draft":
 		color = warn
 	}
 	if !p.Fresh && p.Error == "" {
@@ -258,6 +264,7 @@ func (m *Model) details(p core.PR, selected bool) []string {
 		mergeable = "n/a (" + strings.ToLower(p.State) + ")"
 	}
 	add(fmt.Sprintf("Review: %s · Mergeable: %s · State: %s", value(d.ReviewDecision), mergeable, p.FinalStatus()))
+	add("Merge state: " + value(d.MergeStateStatus))
 	add("Created: " + stamp(d.CreatedAt) + " · GitHub data updated: " + stamp(d.UpdatedAt))
 	if !d.MergedAt.IsZero() {
 		add("Merged: " + stamp(d.MergedAt))
@@ -276,7 +283,8 @@ func (m *Model) details(p core.PR, selected bool) []string {
 		add("⚠ " + issue)
 	}
 	if len(p.Jobs) == 0 {
-		add("No CI checks reported yet.")
+		_, readiness := p.MergeReadiness()
+		add("No CI checks · " + readiness)
 		return lines
 	}
 	jobIndex := 0
@@ -478,7 +486,7 @@ Details   [Enter / Space] Toggle  [→] Focus details  [←] Collapse
           [← / Esc] Close details and return to table navigation
 Open      [o] GitHub PR           [b] Selected CI URL
 Copy      [y] Selected PR JSON    [Y] Filtered table JSON
-          [c] gh request command [C] Jenkins curl requests
+          [c] gh pr view command [C] Jenkins curl command
 Arrange   [/] Fuzzy filter        [Esc] Clear filter
           [s] Repo/progress sort  [r] Reverse sort
 Watch     [p] Pause/resume        [R] Refresh now

@@ -189,7 +189,7 @@ CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `-
 
 Auto-quit considers only PRs matching the active filter. With no filter, it considers the full monitored list. An empty match set never auto-quits. Restored state must be refreshed before it can cause an exit. A GitHub polling error blocks all automatic exits; a Jenkins build polling error blocks the build-related exit modes. Missing optional stage/step details do not override an authoritative build/check result. Pausing prevents auto-quit, and adding/importing PRs postpones it until a subsequent refresh.
 
-“All passing” covers all reported checks, not just branch-protection-required checks. No checks means waiting, even for a closed PR in a build-related mode. Polling cannot predict checks that a provider has not registered yet or reruns started after the last snapshot. Once a build-related mode exits, it cannot observe future reruns.
+“All passing” covers all reported checks, not just branch-protection-required checks. PRs without checks show their mergeability, but do not satisfy the build-related exit modes; `all-closed` still follows the PR lifecycle. Polling cannot predict checks that a provider has not registered yet or reruns started after the last snapshot. Once a build-related mode exits, it cannot observe future reruns.
 
 ## Completed PR retention
 
@@ -216,7 +216,7 @@ Retention preserves dashboard rows and saved history; it **does not delay auto-q
 | `Tab`, `Shift+Tab` | Next/previous CI check in the selected PR |
 | `↑`, `↓`, `PgUp`, `PgDn`, `Home`, `End` | While details are focused: scroll, page, or jump to the start/end |
 | `y`, `Y` | Copy selected PR JSON or all PRs in the filtered table |
-| `c`, `C` | Copy gh requests for the selected PR, or curl requests for the selected Jenkins check |
+| `c`, `C` | Copy a gh PR view command or a Jenkins build curl command |
 | `/`, `Esc` | Fuzzy filter; clear filter when in table navigation |
 | `s`, `r` | Switch repository/progress sort; reverse direction |
 | `p`, `R` | Pause/resume; refresh immediately |
@@ -245,16 +245,22 @@ A **⚠** on the left flags a reported check with a missing/invalid build URL, a
 
 The **Copy** menu provides commands ready to paste into Bash, Zsh, or another POSIX shell:
 
-- `c` copies the actual `gh api` requests from the selected PR's most recent update, using your configured `tools.gh` path and GitHub host. This includes the same GraphQL query, each fetched check page with its cursor, and any GitHub Actions job/run detail requests. Authentication stays with `gh`. Before the first update, it copies the initial PR query.
-- `C` copies a block of `curl` requests for the selected Jenkins check. Use `Tab` to choose a different check. It includes the build API, pipeline stages when requested, and the last-successful-build source used for a running build's time estimate, including when that estimate was cached. Superseded-build requests are retained. Non-Jenkins checks and non-build URLs explain why no Jenkins request is available.
+- `c` copies one `gh pr view <PR-URL> --json <fields>` command, using your configured `tools.gh` path. It requests the full PR field list, including mergeability, merge state, reviews, and `statusCheckRollup`. The PR URL selects the repository and GitHub host; authentication stays with `gh`.
+- `C` copies one `curl -s` command for the selected Jenkins build's `/api/json` endpoint. Use `Tab` to choose a different check. Report links are normalized to their parent build. For example:
 
-Jenkins commands use the same JSON Accept header, request timeout, and first matching server's credential configuration as the monitor. Each endpoint is checked against the server's origin and path before adding credentials. Configured environment variables remain references in the copied text, with nonempty values overriding inline fallbacks when you run it. Inline credentials, if configured, are included in the copied block; environment secret values are not expanded into the clipboard. Local variables live in subshells. Curl's default config file is disabled, and copied requests do not follow redirects because curl cannot enforce the monitor's path-prefix redirect restriction.
+```sh
+curl -s -u "$JENKINS_USER:$JENKINS_API_TOKEN" https://ci.example.com/job/api/17/api/json
+```
 
-These commands retrieve the JSON sources used to render the table, rather than reproducing its calculated display. They make fresh requests: a build can advance, a cached duration can change, and recorded pagination cursors describe the latest monitored update. Jenkins pipeline-stage requests can return 404 when the optional plugin is absent. Use `y`/`Y` for the exact displayed snapshot, including its estimates and stale/error state. Copying commands does not execute them or alter monitoring.
+The credential variable names come from the matching Jenkins server configuration. Environment secrets remain references in the copied command; inline credentials are quoted when configured, and inline fallbacks use shell parameter expansion. Credentials are attached only when the build matches that server's origin and path. Public/unconfigured servers produce a command without `-u`.
+
+These commands make a fresh request for the selected PR or build. They are inspection shortcuts: the monitor separately retrieves paginated checks, pipeline stages, and historical timing data. Use `y`/`Y` for the exact displayed snapshot with estimates and freshness/error fields. Copying a command does not execute it.
 
 ## CI behavior and progress
 
 GitHub is queried through `gh api graphql` with pagination for all check contexts on the current PR head. A changed head during pagination invalidates that snapshot. Polling runs asynchronously with at most four PRs being fetched concurrently, keeping the interface responsive. The default interval is five seconds; an in-flight refresh is never overlapped by a second refresh of the same set.
+
+**PRs without checks:** the status column and exported JSON report GitHub's merge readiness: `mergeable`, `conflicts`, `draft`, `blocked`, `behind`, or `unknown`. The phase explains the result, and the progress column shows `—`. Draft/review requirements and `mergeStateStatus` prevent a conflict-free but blocked PR from being labeled ready. Merged/closed PRs retain their lifecycle status. Unknown mergeability stays unknown and is refreshed normally; a fetch failure remains a warning. No synthetic CI check or passing build is created.
 
 **Jenkins:** numbered build URLs such as `https://ci.example.com/job/api/job/PR-42/17/` and report links beneath that build are supported, including `/17//coverage`, `/17/testReport/`, and `/17/display/redirect?page=tests`. Report paths, query parameters, and fragments are removed before requesting `/17/api/json` and optional `/17/wfapi/describe`; copied curl commands use the same normalized endpoints. Encoded branch names and Jenkins context paths are preserved. Build numbers are read from the URL before the request, then verified by Jenkins when available, so a lookup error does not leave the build column blank. Direct, display, coverage, and test links to the same build are counted once, so completed reports do not inflate progress while the build is still running. When a build overview check is available, its GitHub status is preferred over report statuses for fallback if Jenkins cannot be reached. Non-build links fall back to the GitHub-reported status with an explanatory detail message. A direct build URL, configured server match, or Jenkins check/provider name identifies Jenkins.
 

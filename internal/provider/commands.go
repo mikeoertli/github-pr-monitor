@@ -33,25 +33,29 @@ func githubArgs(ref core.Ref, cursor string) []string {
 
 // shellQuote produces a literal argument for POSIX shells, including bash/zsh.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'" }
+
+var plainShellArg = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+func shellArg(s string) string {
+	if plainShellArg.MatchString(s) {
+		return s
+	}
+	return shellQuote(s)
+}
+
 func shellCommand(args []string) string {
 	quoted := make([]string, len(args))
 	for i, s := range args {
-		quoted[i] = shellQuote(s)
+		quoted[i] = shellArg(s)
 	}
 	return strings.Join(quoted, " ")
 }
 
-// GitHubCommand replays the actual pages and Actions requests for the last update.
+const prViewFields = "additions,assignees,author,autoMergeRequest,baseRefName,baseRefOid,body,changedFiles,closed,closedAt,closingIssuesReferences,comments,commits,createdAt,deletions,files,fullDatabaseId,headRefName,headRefOid,headRepository,headRepositoryOwner,id,isCrossRepository,isDraft,labels,latestReviews,maintainerCanModify,mergeCommit,mergeStateStatus,mergeable,mergedAt,mergedBy,milestone,number,potentialMergeCommit,projectCards,projectItems,reactionGroups,reviewDecision,reviewRequests,reviews,state,statusCheckRollup,title,updatedAt,url"
+
+// GitHubCommand provides a readable, single request for the selected PR.
 func GitHubCommand(c config.Config, p core.PR) string {
-	requests := p.GitHubRequests
-	if len(requests) == 0 {
-		requests = [][]string{githubArgs(p.Ref, "")}
-	}
-	var commands []string
-	for _, args := range requests {
-		commands = append(commands, "GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 "+shellCommand(append([]string{c.Tools.GH}, args...)))
-	}
-	return "(\n" + strings.Join(commands, "\n") + "\n)\n"
+	return shellCommand([]string{c.Tools.GH, "pr", "view", p.Ref.URL, "--json", prViewFields}) + "\n"
 }
 
 func jenkinsServer(c config.Config, raw string) *config.Jenkins {
@@ -119,21 +123,24 @@ func estimateURL(raw string) string {
 
 var shellEnvName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// credentialAssignment keeps environment secrets symbolic, with the same
-// nonempty-environment-over-inline precedence as the HTTP client.
-func credentialAssignment(local, name, fallback string) (string, error) {
-	s := local + "=" + shellQuote(fallback) + "\n"
-	if name != "" {
-		if !shellEnvName.MatchString(name) {
-			return "", fmt.Errorf("configured Jenkins environment variable name is not valid for a shell command")
-		}
-		s += "if [ -n \"${" + name + ":-}\" ]; then " + local + "=\"${" + name + "}\"; fi\n"
+// credentialPart keeps environment values symbolic, with inline fallbacks.
+func credentialPart(name, fallback string) (string, error) {
+	if name == "" {
+		return shellQuote(fallback), nil
 	}
-	return s, nil
+	if !shellEnvName.MatchString(name) {
+		return "", fmt.Errorf("configured Jenkins environment variable name is not valid for a shell command")
+	}
+	if fallback == "" {
+		return "\"$" + name + "\"", nil
+	}
+	// A separately quoted default inside the expansion preserves arbitrary
+	// credentials without interpreting dollars, backticks, or closing braces.
+	literal := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "$", "\\$", "`", "\\`").Replace(fallback)
+	return "\"${" + name + ":-\"" + literal + "\"}\"", nil
 }
 
-// JenkinsCommand copies source requests, including a cached estimate's source.
-// Credentials are selected separately for each URL to retain path scoping.
+// JenkinsCommand retrieves the selected build's JSON in one readable command.
 func JenkinsCommand(c config.Config, job core.Job) (string, error) {
 	if !NewJenkins(c).Match(job) {
 		return "", fmt.Errorf("selected check is not a Jenkins build; use Tab to select a Jenkins check")
@@ -142,42 +149,26 @@ func JenkinsCommand(c config.Config, job core.Job) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	requests := job.JenkinsRequests
-	if len(requests) == 0 {
-		requests = []string{raw + "/api/json"}
-		if !core.Terminal(job.Status) {
-			requests = append(requests, estimateURL(raw))
+	endpoint := raw + "/api/json"
+	command := "curl -s"
+	if server := jenkinsServer(c, endpoint); server != nil {
+		if server.User != "" || server.Token != "" || server.UserEnv != "" || server.TokenEnv != "" {
+			user, err := credentialPart(server.UserEnv, server.User)
+			if err != nil {
+				return "", err
+			}
+			token, err := credentialPart(server.TokenEnv, server.Token)
+			if err != nil {
+				return "", err
+			}
+			auth := user + ":" + token
+			if server.UserEnv != "" && server.TokenEnv != "" && server.User == "" && server.Token == "" {
+				auth = "\"$" + server.UserEnv + ":$" + server.TokenEnv + "\""
+			} else if server.UserEnv == "" && server.TokenEnv == "" {
+				auth = shellQuote(server.User + ":" + server.Token)
+			}
+			command += " -u " + auth
 		}
-		requests = append(requests, raw+"/wfapi/describe")
 	}
-	var commands []string
-	for _, endpoint := range requests {
-		if core.BuildURLWarning(endpoint) != "" {
-			return "", fmt.Errorf("invalid recorded Jenkins API URL")
-		}
-		// Explicit --url prevents option injection. No redirects: curl cannot
-		// enforce the monitor's origin AND path-prefix redirect restriction.
-		args := []string{"curl", "--disable", "--silent", "--show-error", "--fail", "--max-time", strconv.FormatFloat(c.RequestTimeout().Seconds(), 'f', -1, 64), "--header", "Accept: application/json", "--write-out", "\\n", "--url", endpoint}
-		command := shellCommand(args)
-		if server := jenkinsServer(c, endpoint); server != nil {
-			userVar, tokenVar := "gprm_request_user", "gprm_request_token"
-			for userVar == server.UserEnv || userVar == server.TokenEnv {
-				userVar += "_"
-			}
-			for tokenVar == server.UserEnv || tokenVar == server.TokenEnv {
-				tokenVar += "_"
-			}
-			user, e := credentialAssignment(userVar, server.UserEnv, server.User)
-			if e != nil {
-				return "", e
-			}
-			token, e := credentialAssignment(tokenVar, server.TokenEnv, server.Token)
-			if e != nil {
-				return "", e
-			}
-			command = "(\n" + user + token + "set --\nif [ -n \"$" + userVar + "$" + tokenVar + "\" ]; then set -- --user \"$" + userVar + ":$" + tokenVar + "\"; fi\n" + command + " \"$@\"\n)"
-		}
-		commands = append(commands, command)
-	}
-	return "(\n" + strings.Join(commands, "\n") + "\n)\n", nil
+	return command + " " + shellArg(endpoint) + "\n", nil
 }

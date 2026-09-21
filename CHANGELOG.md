@@ -2,6 +2,9 @@
 
 ## 0.4.0 — in progress
 
+- Show merge readiness and reasons for PRs without CI checks, including conflicts, draft/review requirements, and unknown states.
+- Simplify copied commands to one `gh pr view --json` command or one Jenkins build `curl` command.
+
 - Add `-f` / `--filter` to select displayed and polled PRs using fuzzy matching, without restricting discovery.
 - Share the filter with `/` editing, apply it to `--once`, summaries, and auto-quit, and retain excluded PRs in the saved session.
 

@@ -81,7 +81,7 @@ func (m *Model) copyCommand(jenkins bool) tea.Cmd {
 		return nil
 	}
 	p := m.PRs[i]
-	label := "gh request command"
+	label := "gh pr view command"
 	var command string
 	if jenkins {
 		job := m.selectedJob(p)
@@ -95,7 +95,7 @@ func (m *Model) copyCommand(jenkins bool) tea.Cmd {
 			m.notice = core.Clean(err.Error())
 			return nil
 		}
-		label = "Jenkins curl request commands"
+		label = "Jenkins curl command"
 	} else {
 		command = provider.GitHubCommand(m.Config, p)
 	}

@@ -131,7 +131,7 @@ func (p PR) Warnings() []string {
 type PRDetails struct {
 	Branch, BaseBranch, Author                            string
 	Draft                                                 bool
-	ReviewDecision, Mergeable                             string
+	ReviewDecision, Mergeable, MergeStateStatus           string
 	Additions, Deletions, ChangedFiles, Commits, Comments int
 	CreatedAt, UpdatedAt                                  time.Time
 	MergedAt, ClosedAt                                    time.Time
@@ -245,12 +245,50 @@ func (p PR) RetentionExpired(now time.Time, retention time.Duration) bool {
 	return !p.Removed && p.Fresh && p.Error == "" && p.Closed() && retention >= 0 && !at.IsZero() && !now.Before(at.Add(retention))
 }
 
+// MergeReadiness reports GitHub's merge assessment, independently of CI.
+// Unknown data must not be presented as permission to merge.
+func (p PR) MergeReadiness() (string, string) {
+	switch p.State {
+	case "MERGED":
+		return "merged", "PR merged"
+	case "CLOSED":
+		return "closed", "PR closed without merging"
+	}
+	if p.Details.Mergeable == "CONFLICTING" || p.Details.MergeStateStatus == "DIRTY" {
+		return "conflicts", "Not mergeable: merge conflicts"
+	}
+	if p.Details.Draft || p.Details.MergeStateStatus == "DRAFT" {
+		return "draft", "Not mergeable: draft PR"
+	}
+	switch p.Details.ReviewDecision {
+	case "CHANGES_REQUESTED":
+		return "blocked", "Not mergeable: changes requested"
+	case "REVIEW_REQUIRED":
+		return "blocked", "Not mergeable: review required"
+	}
+	switch p.Details.MergeStateStatus {
+	case "BLOCKED":
+		return "blocked", "Not mergeable: blocked by merge requirements"
+	case "BEHIND":
+		return "behind", "Not mergeable: branch behind base"
+	case "UNSTABLE":
+		return "blocked", "Not mergeable: GitHub reports an unstable merge state"
+	case "UNKNOWN":
+		return "unknown", "Mergeability unknown"
+	}
+	if p.State == "OPEN" && p.Details.Mergeable == "MERGEABLE" {
+		return "mergeable", "Mergeable"
+	}
+	return "unknown", "Mergeability unknown"
+}
+
 func (p PR) Status() string {
 	if p.Error != "" {
 		return "stale"
 	}
 	if len(p.Jobs) == 0 {
-		return "no checks"
+		status, _ := p.MergeReadiness()
+		return status
 	}
 	pending, failed := false, false
 	for _, j := range p.Jobs {

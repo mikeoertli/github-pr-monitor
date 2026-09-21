@@ -46,13 +46,13 @@ func TestPRMetadataAndURLWarnings(t *testing.T) {
 	var raw map[string]any
 	json.Unmarshal(graph("abc", "OPEN", nodes, false, ""), &raw)
 	pr := raw["data"].(map[string]any)["repository"].(map[string]any)["pullRequest"].(map[string]any)
-	for k, v := range map[string]any{"headRefName": "feature/new", "baseRefName": "main", "author": map[string]any{"login": "alice"}, "isDraft": true, "reviewDecision": "CHANGES_REQUESTED", "mergeable": "CONFLICTING", "additions": 42, "deletions": 7, "changedFiles": 3, "comments": map[string]any{"totalCount": 5}} {
+	for k, v := range map[string]any{"headRefName": "feature/new", "baseRefName": "main", "author": map[string]any{"login": "alice"}, "isDraft": true, "reviewDecision": "CHANGES_REQUESTED", "mergeable": "CONFLICTING", "mergeStateStatus": "DIRTY", "additions": 42, "deletions": 7, "changedFiles": 3, "comments": map[string]any{"totalCount": 5}} {
 		pr[k] = v
 	}
 	pr["commits"].(map[string]any)["totalCount"] = 4
 	b, _ := json.Marshal(raw)
 	g.Runner = runnerFunc(func(_ context.Context, _ string, args ...string) ([]byte, error) {
-		for _, field := range []string{"headRefName", "baseRefName", "reviewDecision", "changedFiles", "totalCount"} {
+		for _, field := range []string{"headRefName", "baseRefName", "reviewDecision", "mergeStateStatus", "changedFiles", "totalCount"} {
 			if !strings.Contains(strings.Join(args, " "), field) {
 				t.Fatalf("query missing %s", field)
 			}
@@ -62,7 +62,7 @@ func TestPRMetadataAndURLWarnings(t *testing.T) {
 	p := core.NewPR(ref, time.Now())
 	p.Apply(g.Fetch(context.Background(), ref), time.Now())
 	d := p.Details
-	if d.Branch != "feature/new" || d.BaseBranch != "main" || d.Author != "alice" || !d.Draft || d.Additions != 42 || d.Commits != 4 || d.Comments != 5 || d.ReviewDecision != "CHANGES_REQUESTED" {
+	if d.Branch != "feature/new" || d.BaseBranch != "main" || d.Author != "alice" || !d.Draft || d.Additions != 42 || d.Commits != 4 || d.Comments != 5 || d.ReviewDecision != "CHANGES_REQUESTED" || d.MergeStateStatus != "DIRTY" {
 		t.Fatalf("metadata lost: %+v", d)
 	}
 	if len(p.Warnings()) != 2 || !strings.Contains(p.Jobs[0].Warning, "did not report") || !strings.Contains(p.Jobs[1].Warning, "invalid") {
