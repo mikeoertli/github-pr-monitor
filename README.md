@@ -104,7 +104,7 @@ Alternatively, save `gprm completion powershell` to a `.ps1` file and dot-source
 ## Start monitoring
 
 ```sh
-gprm                                         # restore the last session
+gprm                                         # restore the last session and discover PRs
 gprm --startup clipboard                     # start with PR links in the clipboard
 gprm --startup empty                         # start with an empty dashboard
 gprm --startup auto-discover                  # discover open and recently closed PRs
@@ -128,6 +128,8 @@ Press `/` to edit that same filter. Typing previews the rows; `Enter` applies it
 
 Matching uses locally available data: repository names and PR numbers are known immediately; titles, branches, authors, and CI details require a previous fetch. An unmatched PR is not fetched just to learn whether its unknown fields would match. Clear the filter to populate that data, or use a repository/number filter on a fresh session. Filters on changing fields such as status stop polling a PR once its last fetched data no longer matches. The filter is per invocation and is not saved in the config or session.
 
+The default `restore` mode loads the saved session and then discovers PRs once on every launch, including the first launch with no saved session. Newly discovered PRs are added without replacing saved history or duplicating existing rows. Existing configs with `startup = "restore"` get this behavior automatically. `empty` and `clipboard` do not discover at startup.
+
 Discovery uses your authenticated GitHub account and searches for authored open PRs plus PRs merged or closed within the retention window. Open PRs get priority under the combined `discovery_limit` (100 by default, maximum 1000). Results are deduplicated and manually dismissed PRs are skipped. With `forever` retention, discovery looks back 24 hours for newly completed PRs while already monitored completions stay indefinitely; `0s` disables discovery of completed PRs. The app reports when the discovery limit is reached. It runs on startup or when you press `d`, not on every refresh.
 
 ## Configuration
@@ -143,7 +145,7 @@ This refuses to overwrite an existing file. `--config /path/to/gprm_config.toml`
 If you previously used `~/.config/gprm/config.toml`, rename it to `gprm_config.toml` in the same directory before the next live run, or keep using it explicitly with `--config ~/.config/gprm/config.toml`. Existing files are not automatically renamed or overwritten. The default template is embedded from `internal/config/defaults.toml`, which also supplies runtime defaults for omitted settings.
 
 ```toml
-startup = "restore"          # restore | clipboard | empty | auto-discover
+startup = "restore"          # saved session + discovery; clipboard | empty | auto-discover
 auto_quit = "all-closed"    # never | builds-finished | all-passing | all-closed
 completed_retention = "24h" # duration since closure | forever | 0s
 interval = "5s"
@@ -276,7 +278,7 @@ Progress bars are red below 25%, orange from 25%, yellow from 50%, and green fro
 
 Sessions are written atomically, with permissions `0600`, to `~/.local/state/gprm/session.json` (or `$XDG_STATE_HOME/gprm/session.json`). `--state /path/to/session.json` allows separate named sessions. Use different state paths for concurrent monitors. A corrupt saved session produces an error instead of being overwritten during restore.
 
-`restore` keeps PRs, observed run history, accumulated monitoring time, retention clocks, and dismissals. `auto-discover` keeps saved completed PRs and dismissals while discovering the current open/recently closed set. `empty` and `clipboard` start fresh sessions and replace the saved session. Dismissed and expired PR rows appear in the current exit summary but are not restored. The app checkpoints periodically and after changes, then saves again on normal quit, Ctrl+C, or SIGTERM.
+`restore` keeps PRs, observed run history, accumulated monitoring time, retention clocks, and dismissals, then adds newly discovered PRs. Saved open PRs remain even when they are absent from discovery results. `auto-discover` keeps saved completed PRs and dismissals while discovering the current open/recently closed set. `empty` and `clipboard` start fresh sessions and replace the saved session. Dismissed and expired PR rows appear in the current exit summary but are not restored. The app checkpoints periodically and after changes, then saves again on normal quit, Ctrl+C, or SIGTERM.
 
 The summary includes each PR and CI job, distinct **observed** run counts, accumulated time monitored, and final PR/build status. Repeated polls of the same run do not increase the count. Counters persist through restoration and do not add time while the app is closed. Generic status providers that reuse a URL and expose no run identity cannot reliably distinguish reruns; counts are therefore observational, not a complete historical audit.
 

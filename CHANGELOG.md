@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.4.0 — in progress
+## 0.5.0 — in progress
+
+- Discover PRs on launch in the default restore mode, preserving saved PRs, history, and dismissals while adding new results without duplicates.
+
+## 0.4.0 — 2026-09-21
 
 - Show merge readiness and reasons for PRs without CI checks, including conflicts, draft/review requirements, and unknown states.
 - Simplify copied commands to one `gh pr view --json` command or one Jenkins build `curl` command.

@@ -1,4 +1,5 @@
 # gprm settings. Command-line flags override these defaults.
+# Restore keeps the saved session and adds discovered PRs on every launch.
 startup = "restore" # restore | clipboard | empty | auto-discover
 auto_quit = "all-closed" # never | builds-finished | all-passing | all-closed
 completed_retention = "24h" # time since merge/closure; forever keeps until dismissed; 0s hides immediately

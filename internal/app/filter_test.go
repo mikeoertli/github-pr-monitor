@@ -88,7 +88,7 @@ esac
 			if err != nil || len(prs) != 2 {
 				t.Fatalf("filter dropped saved/discovered PRs: %v %v", prs, err)
 			}
-			if tc.name == "discovery" && !strings.Contains(string(calls), "search/issues") {
+			if (tc.name == "discovery" || tc.name == "restore" || tc.name == "no matches") && !strings.Contains(string(calls), "search/issues") {
 				t.Fatal("filter bypassed discovery")
 			}
 		})

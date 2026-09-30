@@ -42,7 +42,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	noColor := flags.Bool("no-color", false, "disable color and text styling")
 	help := flags.BoolP("help", "h", false, "show help")
 	flags.Usage = func() {
-		fmt.Fprint(stderr, "Usage: gprm [flags] [PR-URL | owner/repo#123 ...]\n       gprm completion bash|zsh|fish|powershell\n\nGitHub PR and build tracker. Flags may appear before or after PR references.\nDefault: restore previous session; quit when all monitored PRs are merged/closed.\n\n")
+		fmt.Fprint(stderr, "Usage: gprm [flags] [PR-URL | owner/repo#123 ...]\n       gprm completion bash|zsh|fish|powershell\n\nGitHub PR and build tracker. Flags may appear before or after PR references.\nDefault: restore previous session and discover PRs; quit when all monitored PRs are merged/closed.\n\n")
 		flags.PrintDefaults()
 	}
 	// Completion runs before configuration, credentials, or the TUI are touched.
@@ -126,22 +126,19 @@ func Run(args []string, out, stderr io.Writer) error {
 	} else {
 		var refs []core.Ref
 		switch c.Startup {
-		case "restore":
-			saved, err = core.LoadSessionState(*statePath)
-			prs = saved.PRs
 		case "clipboard":
 			var text string
 			text, err = Clipboard(ctx, c)
 			if err == nil {
 				refs, err = core.ParseBatch(text, c.GitHubHost)
 			}
-		case "auto-discover":
+		case "restore", "auto-discover":
 			saved, err = core.LoadSessionState(*statePath)
 			if err == nil {
 				refs, err = source.Discover(ctx)
 			}
 			for _, p := range saved.PRs {
-				if p.Closed() {
+				if c.Startup == "restore" || p.Closed() {
 					prs = append(prs, p)
 				}
 			}
@@ -154,7 +151,7 @@ func Run(args []string, out, stderr io.Writer) error {
 		}
 		for _, ref := range refs {
 			skip := false
-			if c.Startup == "auto-discover" {
+			if c.Startup == "restore" || c.Startup == "auto-discover" {
 				for _, d := range saved.Dismissed {
 					if strings.EqualFold(d.URL, ref.URL) {
 						skip = true

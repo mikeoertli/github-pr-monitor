@@ -139,8 +139,8 @@ esac
 		t.Fatalf("%+v %v", prs, err)
 	}
 	run("restore")
-	if !strings.Contains(out.String(), "acme/explicit") {
-		t.Fatal("restore failed")
+	if !strings.Contains(out.String(), "acme/explicit") || !strings.Contains(out.String(), "acme/discovered") {
+		t.Fatal("restore did not combine saved and discovered PRs")
 	}
 	run("clipboard")
 	prs, _ = core.LoadSession(state)
