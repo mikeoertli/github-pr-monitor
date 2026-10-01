@@ -12,31 +12,34 @@ import (
 // snapshot exports the latest displayed data, including explicit freshness after
 // a failed update. Config, credentials, and historical runs are not part of it.
 type snapshot struct {
-	Ref         core.Ref       `json:"ref"`
-	Title       string         `json:"title"`
-	Head        string         `json:"head"`
-	State       string         `json:"state"`
-	Details     core.PRDetails `json:"details"`
-	Jobs        []core.Job     `json:"jobs"`
-	Status      string         `json:"status"`
-	FinalStatus string         `json:"final_status"`
-	Progress    float64        `json:"progress"`
-	Fresh       bool           `json:"fresh"`
-	LastAttempt time.Time      `json:"last_attempt"`
-	LastSuccess time.Time      `json:"last_success"`
-	Error       string         `json:"error,omitempty"`
-	Warnings    []string       `json:"warnings,omitempty"`
+	StatusChangedStatus string         `json:"status_changed_status"`
+	StatusChangedAt     time.Time      `json:"status_changed_at"`
+	StatusTimeObserved  bool           `json:"status_time_observed"`
+	Ref                 core.Ref       `json:"ref"`
+	Title               string         `json:"title"`
+	Head                string         `json:"head"`
+	State               string         `json:"state"`
+	Details             core.PRDetails `json:"details"`
+	Jobs                []core.Job     `json:"jobs"`
+	Status              string         `json:"status"`
+	FinalStatus         string         `json:"final_status"`
+	Progress            float64        `json:"progress"`
+	Fresh               bool           `json:"fresh"`
+	LastAttempt         time.Time      `json:"last_attempt"`
+	LastSuccess         time.Time      `json:"last_success"`
+	Error               string         `json:"error,omitempty"`
+	Warnings            []string       `json:"warnings,omitempty"`
 }
 
 func exportSnapshot(p core.PR) snapshot {
-	return snapshot{Ref: p.Ref, Title: p.Title, Head: p.Head, State: p.State,
+	return snapshot{StatusChangedStatus: p.StatusChangedStatus, StatusChangedAt: p.StatusChangedAt, StatusTimeObserved: p.StatusTimeObserved, Ref: p.Ref, Title: p.Title, Head: p.Head, State: p.State,
 		Details: p.Details, Jobs: p.Jobs, Status: p.Status(), FinalStatus: p.FinalStatus(),
 		Progress: p.Progress(), Fresh: p.Fresh, LastAttempt: p.LastAttempt,
 		LastSuccess: p.LastSuccess, Error: p.Error, Warnings: p.Warnings()}
 }
 
 func (m *Model) copyJSON(all bool) tea.Cmd {
-	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
+	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending, m.Config.Jira.ProjectPrefixes...)
 	if !all {
 		if i := m.selected(); i >= 0 {
 			rows = []int{i}

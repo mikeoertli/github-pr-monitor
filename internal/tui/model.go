@@ -18,11 +18,17 @@ type Source interface {
 	Discover(context.Context) ([]core.Ref, error)
 }
 type Actions struct {
-	Clipboard func(context.Context) (string, error)
-	Open      func(context.Context, string) error
-	Copy      func(context.Context, string) error
+	UpdateBranch func(context.Context, core.PR) error
+	Clipboard    func(context.Context) (string, error)
+	Open         func(context.Context, string) error
+	Copy         func(context.Context, string) error
 }
 type Model struct {
+	menuKey                                     string
+	menuKeyUntil                                time.Time
+	updatePR                                    core.PR
+	updating                                    bool
+	pendingUpdates                              map[string]string
 	Config                                      config.Config
 	PRs                                         []core.PR
 	Dismissed                                   map[string]core.Ref
@@ -92,7 +98,7 @@ func (m *Model) SetFilter(filter string) {
 
 // PollingRows uses the same matcher as the table, independently of discovery.
 func (m *Model) PollingRows() []int {
-	return core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
+	return core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending, m.Config.Jira.ProjectPrefixes...)
 }
 
 func (m *Model) scopedPRs() []core.PR {
@@ -111,7 +117,7 @@ func (m *Model) SummaryPRs() []core.PR {
 		prs[i].Removed = false
 	}
 	var result []core.PR
-	for _, i := range core.Sorted(prs, m.filter, m.Config.Sort, m.Config.Descending) {
+	for _, i := range core.Sorted(prs, m.filter, m.Config.Sort, m.Config.Descending, m.Config.Jira.ProjectPrefixes...) {
 		result = append(result, m.PRs[i])
 	}
 	return result
@@ -126,7 +132,7 @@ func (m *Model) refreshFilter() tea.Cmd {
 func (m *Model) Init() tea.Cmd { return tea.Batch(tick(), m.poll()) }
 func tick() tea.Cmd            { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m *Model) poll() tea.Cmd {
-	if m.mode == "filter" {
+	if m.mode == "filter" || m.mode == "update" || m.updating {
 		return nil
 	}
 	if m.busy {
@@ -248,7 +254,7 @@ func (m *Model) ExpireCompleted(now time.Time) {
 
 func (m *Model) Finish() { m.account(time.Now()); m.save() }
 func (m *Model) selected() int {
-	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
+	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending, m.Config.Jira.ProjectPrefixes...)
 	if m.detailFocus != "" {
 		found := false
 		for pos, i := range rows {
@@ -332,6 +338,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for i := range m.PRs {
 				if m.PRs[i].Ref.URL == next.Ref.URL && !m.PRs[i].Removed {
 					m.PRs[i].Apply(next, time.Now())
+					if head, pending := m.pendingUpdates[next.Ref.URL]; pending {
+						if m.PRs[i].Fresh && (m.PRs[i].Head != head || m.PRs[i].Closed()) {
+							delete(m.pendingUpdates, next.Ref.URL)
+						} else {
+							m.PRs[i].Fresh = false
+						}
+					}
 					break
 				}
 			}
@@ -343,10 +356,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshAgain = false
 			return m, m.poll()
 		}
-		if m.mode == "" && !m.importing && !m.paused && quitReady {
+		if m.mode == "" && !m.importing && !m.paused && !m.updating && quitReady {
 			m.QuitReason = "auto-quit: " + m.Config.AutoQuit
 			return m, tea.Quit
 		}
+	case branchUpdateMsg:
+		m.updating = false
+		if msg.Err != nil {
+			m.notice = core.Clean(msg.Err.Error()) + " · Refreshing; verify the PR before retrying."
+		} else {
+			if m.pendingUpdates == nil {
+				m.pendingUpdates = map[string]string{}
+			}
+			m.pendingUpdates[msg.PR.Ref.URL] = msg.PR.Head
+			m.notice = "Branch update requested; waiting for GitHub to report the new head."
+		}
+		for i := range m.PRs {
+			if m.PRs[i].Ref.URL == msg.PR.Ref.URL {
+				m.PRs[i].Fresh = false
+			}
+		}
+		return m, m.poll()
 	case importMsg:
 		m.importing = false
 		if msg.Err != nil {
@@ -381,10 +411,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = core.Clean(msg.Err.Error())
 		}
 	case tea.KeyMsg:
+		if m.QuitReason == "quit" && msg.String() != "ctrl+c" {
+			return m, nil
+		}
+		m.recordMenuKey(msg.String())
 		key := msg.String()
 		if key == "ctrl+c" {
 			m.QuitReason = "quit"
 			return m, tea.Quit
+		}
+		if m.mode == "update" {
+			if key == "esc" {
+				m.mode = ""
+				m.notice = "Branch update cancelled."
+				return m, nil
+			}
+			if key == "enter" {
+				return m, m.confirmBranchUpdate()
+			}
+			return m, nil
 		}
 		if m.mode != "" {
 			switch key {
@@ -466,7 +511,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "Q", "q":
 			m.QuitReason = "quit"
-			return m, tea.Quit
+			if m.noColor() {
+				return m, tea.Quit
+			}
+			// Let the pressed Quit item paint once before leaving the alternate screen.
+			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg { return tea.QuitMsg{} })
 		case "?":
 			m.help = true
 		case "a":
@@ -532,9 +581,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			m.jobCursor--
 			m.detailScroll = 0
+		case "J", "K":
+			return m, m.jiraAction(key == "K")
+		case "u":
+			m.startBranchUpdate()
 		case "s":
 			if m.Config.Sort == "repo" {
 				m.Config.Sort = "progress"
+			} else if m.Config.Sort == "progress" {
+				m.Config.Sort = "jira"
 			} else {
 				m.Config.Sort = "repo"
 			}

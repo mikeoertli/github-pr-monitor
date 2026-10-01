@@ -1,4 +1,4 @@
-// Package provider reads GitHub and CI state. All remote operations are read-only.
+// Package provider reads GitHub and CI state and requests explicit branch updates.
 package provider
 
 import (
@@ -50,7 +50,7 @@ func (g *GitHub) run(ctx context.Context, args ...string) ([]byte, error) {
 const query = `query($owner:String!,$repo:String!,$number:Int!,$cursor:String) {
  repository(owner:$owner,name:$repo) { pullRequest(number:$number) {
   title state headRefOid merged mergedAt closed closedAt headRefName baseRefName author { login }
-  isDraft reviewDecision mergeable mergeStateStatus additions deletions changedFiles createdAt updatedAt
+  isDraft reviewDecision mergeable mergeStateStatus viewerCanUpdateBranch additions deletions changedFiles createdAt updatedAt
   comments { totalCount }
   commits(last:1) { totalCount nodes { commit { statusCheckRollup { contexts(first:100,after:$cursor) {
    pageInfo { hasNextPage endCursor }
@@ -81,6 +81,7 @@ type contexts struct {
 	}
 }
 type gqlPR struct {
+	ViewerCanUpdateBranch                                                 bool
 	Title, State, HeadRefOID                                              string
 	MergedAt, ClosedAt                                                    time.Time
 	Merged, Closed                                                        bool
@@ -152,7 +153,8 @@ func (g *GitHub) Fetch(ctx context.Context, ref core.Ref) core.PR {
 		}
 		p.LastSuccess = time.Now()
 		p.Details = core.PRDetails{
-			Branch: core.Clean(raw.HeadRefName), BaseBranch: core.Clean(raw.BaseRefName), Author: core.Clean(raw.Author.Login),
+			ViewerCanUpdateBranch: raw.ViewerCanUpdateBranch,
+			Branch:                core.Clean(raw.HeadRefName), BaseBranch: core.Clean(raw.BaseRefName), Author: core.Clean(raw.Author.Login),
 			Draft: raw.IsDraft, ReviewDecision: raw.ReviewDecision, Mergeable: raw.Mergeable, MergeStateStatus: raw.MergeStateStatus,
 			Additions: raw.Additions, Deletions: raw.Deletions, ChangedFiles: raw.ChangedFiles,
 			Commits: raw.Commits.TotalCount, Comments: raw.Comments.TotalCount, CreatedAt: raw.CreatedAt, UpdatedAt: raw.UpdatedAt,
@@ -475,4 +477,22 @@ func (g *GitHub) enrichActions(ctx context.Context, ref core.Ref, j core.Job, nu
 		j.Number += fmt.Sprintf(".%d", job.RunAttempt)
 	}
 	return j
+}
+
+// UpdateBranch merges the base into the PR branch, guarded against a changed head.
+// Authentication and authorization stay with gh/GitHub; no local checkout is used.
+func (g *GitHub) UpdateBranch(ctx context.Context, p core.PR) error {
+	if !p.CanUpdateBranch() {
+		return fmt.Errorf("branch update is unavailable; refresh PR data first")
+	}
+	ref, err := core.ParseRef(p.Ref.URL, p.Ref.Host)
+	if err != nil || ref != p.Ref {
+		return fmt.Errorf("invalid PR reference")
+	}
+	_, err = g.run(ctx, "api", "--hostname", ref.Host, "--method", "PUT",
+		fmt.Sprintf("repos/%s/pulls/%d/update-branch", ref.Repo, ref.Number), "-f", "expected_head_sha="+p.Head)
+	if err != nil {
+		return fmt.Errorf("branch update failed; refresh and check permissions or conflicts: %w", err)
+	}
+	return nil
 }

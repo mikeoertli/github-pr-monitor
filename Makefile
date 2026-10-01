@@ -1,7 +1,8 @@
 GO ?= go
 PREFIX ?= $(HOME)/.local
+VHS ?= vhs
 
-.PHONY: build completions test check install install-completions demo
+.PHONY: build completions test check install install-completions demo demo-gif
 build:
 	mkdir -p bin
 	$(GO) build -o bin/gprm ./cmd/gprm
@@ -27,6 +28,10 @@ check:
 
 demo: build
 	./bin/gprm --demo
+
+# Rebuild first so the recording always uses this checkout, not an installed copy.
+demo-gif: build
+	$(VHS) demo/demo.tape
 
 install: build
 	mkdir -p "$(PREFIX)/bin"

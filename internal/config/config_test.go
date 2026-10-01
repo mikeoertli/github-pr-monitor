@@ -100,3 +100,37 @@ func TestCompletedRetentionSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestJiraConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gprm_config.toml")
+	if err := os.WriteFile(path, []byte("sort='jira'\n[jira]\nbase_url='https://jira.example.com/team/'\nproject_prefixes=['ABC','ops']\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Jira.URL("ABC-42"); got != "https://jira.example.com/team/browse/ABC-42" {
+		t.Fatal(got)
+	}
+	if c.Jira.URL("") != "" || (Jira{}).URL("ABC-42") != "" {
+		t.Fatal("link without ticket/server")
+	}
+	for _, base := range []string{"file:///tmp/jira", "https://user:secret@jira.example.com", "https://jira.example.com?q=x", "https://jira.example.com#x", "jira.example.com"} {
+		bad := c
+		bad.Jira.BaseURL = base
+		if bad.Validate() == nil {
+			t.Errorf("accepted %s", base)
+		}
+	}
+	for _, prefix := range []string{"", "ABC-1", "A B", "2ABC", "A/B"} {
+		bad := c
+		bad.Jira.ProjectPrefixes = []string{prefix}
+		if bad.Validate() == nil {
+			t.Errorf("accepted prefix %q", prefix)
+		}
+	}
+}

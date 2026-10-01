@@ -8,7 +8,9 @@ A keyboard-driven GitHub PR and build dashboard, styled after [kube-resource-mon
 
 - Jenkins build numbers, elapsed-time estimates, active pipeline stages, and superseding builds.
 - GitHub Actions run numbers, attempts, and active steps. Other CI providers work through GitHub check runs and commit statuses.
-- Fuzzy filtering (including branches and authors), repository/progress sorting, browser shortcuts, and automatic session restoration.
+- Fuzzy filtering (including branches and authors), repository/progress/Jira sorting, browser shortcuts, and automatic session restoration.
+- Target branches, Jira ticket columns and links, and grouping to correlate PRs across repositories and release branches.
+- GitHub branch-update indicators and a confirmed update action.
 - Expandable PR rows with branch, review, change counts, timestamps, and full PR/CI URLs.
 - Visible CI warnings and clipboard export of the selected PR or filtered table as JSON.
 - Completed PRs stay visible for 24 hours by default, or until dismissed with configurable indefinite retention.
@@ -17,8 +19,10 @@ A keyboard-driven GitHub PR and build dashboard, styled after [kube-resource-mon
 - An offline demo that never touches your saved session or calls GitHub/Jenkins.
 
 <p align="center">
-  <img src="assets/gprm_demo.png" alt="demo screenshot of 'gprm --demo'" align="center" width="75%">
+  <img src="assets/gprm-demo.gif" alt="Offline demo: live CI progress, status ages, Jira grouping, target branches, filtering, details and monitoring summary" align="center" width="100%">
 </p>
+
+The [VHS recording script](demo/demo.tape) runs entirely in demo mode. Pressed menu items briefly flash bright pink with black text, making each action visible in place. It shows live progress, relative status ages, repository/progress/Jira sorting, target branches, details navigation, fuzzy filtering, pause/help, and the final summary.
 
 ## Build and install
 
@@ -132,6 +136,18 @@ The default `restore` mode loads the saved session and then discovers PRs once o
 
 Discovery uses your authenticated GitHub account and searches for authored open PRs plus PRs merged or closed within the retention window. Open PRs get priority under the combined `discovery_limit` (100 by default, maximum 1000). Results are deduplicated and manually dismissed PRs are skipped. With `forever` retention, discovery looks back 24 hours for newly completed PRs while already monitored completions stay indefinitely; `0s` disables discovery of completed PRs. The app reports when the discovery limit is reached. It runs on startup or when you press `d`, not on every refresh.
 
+## Updating the demo GIF
+
+Install [VHS](https://github.com/charmbracelet/vhs) and its `ttyd` / `ffmpeg` dependencies (on macOS, `brew install vhs`), then run from this repository:
+
+```sh
+make demo-gif
+```
+
+This builds the current checkout and runs `demo/demo.tape`, writing `assets/gprm-demo.gif`. Menu-item highlighting works in both demo and live sessions without an extra flag; `--no-color` disables it along with other styling. VHS uses a local terminal server and headless browser; its browser runtime may need a download on the first run. The recording uses only fictional offline fixtures, does not read your settings/session, and does not invoke browser, clipboard, or remote-update shortcuts. It neither publishes the GIF nor commits files.
+
+When changing visible UI, shortcuts, layout, or demo behavior, update the tape as needed and regenerate the GIF in the same change. Review the animation for readable text and successful navigation before including the asset. The tape waits for expected screens rather than relying only on fixed delays. Optional overrides: `make demo-gif VHS=/path/to/vhs GO=/path/to/go`.
+
 ## Configuration
 
 On the first live run, gprm creates `~/.config/gprm/gprm_config.toml` with documented defaults and permissions `0600`. `$XDG_CONFIG_HOME/gprm/gprm_config.toml` is used when set. Create it ahead of time with:
@@ -150,12 +166,16 @@ auto_quit = "all-closed"    # never | builds-finished | all-passing | all-closed
 completed_retention = "24h" # duration since closure | forever | 0s
 interval = "5s"
 request_timeout = "20s"
-sort = "repo"              # repo | progress
+sort = "repo"              # repo | progress | jira
 descending = false
 ci_column = "auto"         # auto | always | never
 no_color = false
 github_host = "github.com"
 discovery_limit = 100
+
+[jira]
+base_url = ""             # e.g. https://jira.example.com; omit /browse
+project_prefixes = []      # e.g. ["ABC", "OPS"]; empty accepts any project code
 
 [tools]
 gh = "gh"                 # executable name or absolute path
@@ -179,6 +199,32 @@ Repeat `[[jenkins]]` for more servers. The environment variables named by `user_
 Paths and arguments are separate: `clipboard = "/path with spaces/helper"` works; `clipboard = "helper --flag"` does not. Commands are executed directly, without a shell. Defaults are `pbpaste`/`pbcopy`/`open` on macOS, `wl-paste`/`wl-copy` or `xclip`/`xsel` and `xdg-open` on Linux, and PowerShell clipboard/rundll32 on Windows. Configure `clipboard_write` and `clipboard_write_args` separately from the clipboard reader; exported JSON is passed unchanged through stdin. For example, X11 copying uses `clipboard_write = "xclip"` with `clipboard_write_args = ["-selection", "clipboard", "-in"]`. Windows integrations are implemented but have not been tested on Windows. Manual paste into the `a` input works when no clipboard helper is available.
 
 CLI overrides: `--startup` (`-m`), `--auto-quit` (`-q`), `--interval` (`-i`), `--sort` (`-s`), `--gh`, `--completed-retention`, and `--no-color`. Use `--config` (`-c`) to select settings, `--help` (`-h`) for usage, and `--version` (`-V`) for the version. Single-dash long spellings such as `-help` are not accepted. Overrides affect the current run and do not rewrite your settings. Demo mode uses built-in defaults and CLI overrides; it ignores the config file.
+
+## Jira tickets and grouping
+
+Add a `[jira]` section to `~/.config/gprm/gprm_config.toml` (existing settings files are not overwritten):
+
+```toml
+[jira]
+base_url = "https://jira.example.com"
+project_prefixes = ["ABC", "OPS"]
+```
+
+A title starting with `abc-123` or `ABC-123` matches `ABC`; the table displays `ABC-123`. Only a leading ticket followed by punctuation, whitespace, or the end of the title is recognized. With an empty `project_prefixes` list, any conventional project code is accepted. Codes start with a letter and may contain letters, digits, or underscores. Ticket numbers must be positive. IDs elsewhere in the title are ignored.
+
+The **JIRA** column and footer shortcuts appear when a visible PR has a matching ID, space permitting. Press **`J`** to open its ticket in your default browser, or **`K`** to copy the Jira URL. Links use `<base_url>/browse/<ID>`; the base URL can include a context path such as `/jira`, but should not end in `/browse`. Without a base URL, ticket detection and grouping still work; link shortcuts explain which setting is missing. No Jira credentials or API access are required.
+
+Run `gprm --sort jira` (or `gprm -s jira`) to group by ticket ID, then repository, then **target branch**, with source branch and PR number breaking ties. Press `s` to cycle repository → progress → Jira sorting, and `r` to reverse direction. PRs without a matching ticket remain below the ticket groups in either direction. Set the top-level `sort = "jira"` before any TOML section header to make this the default. Filtering still controls display, polling, and auto-quit.
+
+## Updating PR branches
+
+An **↑** beside a PR means GitHub reports that your signed-in account can update its branch. Expand details to see the action when a warning occupies the row's indicator. The **TARGET** column names the branch the PR will merge into; the wider **BRANCH** column is the PR's source branch.
+
+Press **`u`** on the selected PR, review the repository/PR and target → source branches, then press **Enter** to confirm or **Esc** to cancel. The update merges the target into the PR branch and may restart CI. It does not merge/close the PR or modify a local checkout. GitHub enforces permissions, protection rules, and conflicts. The action uses your configured `gh` executable and its existing authentication, with the observed head commit as a guard against concurrent changes. Branch updates are disabled in the offline demo.
+
+Availability comes from GitHub's [`viewerCanUpdateBranch` field](https://docs.github.com/en/graphql/reference/pulls#pullrequest), which is false when the branch is current or the viewer cannot update it. The update uses GitHub's [update-branch endpoint](https://docs.github.com/en/rest/pulls/pulls#update-a-pull-request-branch). Stale/restored snapshots cannot enable the action. If a refresh changes the head or target while confirmation is open, choose the action again to review the new state.
+
+After GitHub accepts an update, gprm refreshes and shows it as pending until a new head (or closure) is observed. The previous build's result cannot trigger auto-quit in the meantime. If monitoring is paused, the action still performs one refresh; use `R` or resume with `p` to follow later changes. Errors appear in the status line; verify the PR before retrying after a timeout.
 
 ## Exit modes
 
@@ -220,16 +266,20 @@ Retention preserves dashboard rows and saved history; it **does not delay auto-q
 | `y`, `Y` | Copy selected PR JSON or all PRs in the filtered table |
 | `c`, `C` | Copy a gh PR view command or a Jenkins build curl command |
 | `/`, `Esc` | Fuzzy filter; clear filter when in table navigation |
-| `s`, `r` | Switch repository/progress sort; reverse direction |
+| `s`, `r` | Cycle repository/progress/Jira sort; reverse direction |
 | `p`, `R` | Pause/resume; refresh immediately |
 | `o`, `b` | Open the selected PR or selected check's build URL |
+| `J`, `K` | Open the selected Jira ticket or copy its URL (requires `jira.base_url`) |
+| `u` | Confirm updating the PR branch from its target branch |
 | `x` | Dismiss a PR; remember the dismissal and keep it in this run's summary |
 | `?` | Show help |
 | `Q` / `q` / `Ctrl+C` | Quit and print the summary |
 
-The footer groups shortcuts under **PRS**, **INSPECT**, **COPY**, and **WATCH**, with bold colored headings and keycaps, bright descriptions, and muted separators. With colors disabled, uppercase headings and separators preserve the grouping. The table grows with the terminal: branch appears from 140 columns and title from 190 columns, while repository and phase columns use the remaining width. Compact windows prioritize repository, progress, and status; `?` lists every shortcut.
+The footer groups shortcuts under **PRS**, **INSPECT**, **COPY**, **WATCH**, and (when relevant) **JIRA**, with bold colored headings and keycaps, bright descriptions, and muted separators. With colors disabled, uppercase headings and separators preserve the grouping. The table grows with the terminal: target and Jira columns get priority, followed by build/CI information, source branch, and title as space permits. Repository and phase columns use the remaining width. Compact windows prioritize repository, progress, and status; `?` lists every shortcut.
 
 Press `Enter` to expand a PR beneath its table row. Details include source/target branches, author, draft state, review decision, mergeability, additions/deletions, file/commit/conversation-comment counts, timestamps, head commit, PR URL, and CI check details including the CI URL. These fields come from [GitHub's pull request API](https://docs.github.com/en/graphql/reference/pulls#pullrequest). Expansion is retained per PR while sorting and filtering, for the current run. Long text and URLs wrap. Press `→` on a selected PR to focus its details; `↑`/`↓` then scroll the content, `PgUp`/`PgDn` move by a page, and `Home`/`End` jump to the start/end. The PR row stays visible above the details, with a line range and `↑ more` / `↓ more` indicators. Press `←` or `Esc` once to close focused details and return to table navigation, keeping the same PR selected and preserving your filter. Focus stays with the same PR during sorting and refreshes. `/` always opens filtering.
+
+Status labels show relative ages such as **failed 90m ago** or **merged 35m ago** when the terminal is wide enough; details and the selected-row summary also include the age. CI completion timestamps determine terminal build ages, and GitHub's merge/closure timestamps determine lifecycle ages. For multiple checks, the aggregate finishes when the last check finishes. When no event time is available (including merge-readiness changes), **~** marks the first time the monitor observed that state. These timestamps survive refreshes and session restores; unrelated PR edits and failed refreshes do not reset them. Details show the exact timestamp and its basis, and copied JSON includes `status_changed_at`, `status_changed_status`, and `status_time_observed`. A stale snapshot retains its last known state/time rather than dating the error as a remote state change.
 
 PR lifecycle is independent of CI success: merged and closed PRs take precedence in the status column and are counted separately in the header. Explicit GitHub merge/closure fields drive this state and the `all-closed` exit mode. Mergeability is shown as `n/a` after closure. Older PR metadata and responses that would revert a merged PR to open are flagged as stale instead of replacing the displayed snapshot.
 

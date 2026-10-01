@@ -33,7 +33,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	retention := flags.String("completed-retention", "", "keep merged/closed PRs for a duration (24h), forever, or 0s")
 	interval := flags.StringP("interval", "i", "", "status refresh interval, e.g. 5s")
 	filter := flags.StringP("filter", "f", "", "fuzzy filter for displayed and polled PRs")
-	sortBy := flags.StringP("sort", "s", "", "repo | progress")
+	sortBy := flags.StringP("sort", "s", "", "repo | progress | jira (ticket, repository, target branch)")
 	gh := flags.String("gh", "", "gh executable path")
 	demo := flags.Bool("demo", false, "offline demo (does not read or write your session)")
 	once := flags.Bool("once", false, "fetch once, print a snapshot and summary, then exit")
@@ -44,6 +44,14 @@ func Run(args []string, out, stderr io.Writer) error {
 	flags.Usage = func() {
 		fmt.Fprint(stderr, "Usage: gprm [flags] [PR-URL | owner/repo#123 ...]\n       gprm completion bash|zsh|fish|powershell\n\nGitHub PR and build tracker. Flags may appear before or after PR references.\nDefault: restore previous session and discover PRs; quit when all monitored PRs are merged/closed.\n\n")
 		flags.PrintDefaults()
+		fmt.Fprint(stderr, `
+Jira: add this section to your TOML settings:
+  [jira]
+  base_url = "https://jira.example.com"
+  project_prefixes = ["ABC", "OPS"]
+Leading title IDs match case-insensitively; an empty prefix list accepts any project.
+TUI: J opens Jira, K copies its URL, s cycles sorting, u confirms a branch update.
+`)
 	}
 	// Completion runs before configuration, credentials, or the TUI are touched.
 	if len(args) > 0 && (args[0] == "completion" || args[0] == "__complete" || args[0] == "__completeNoDesc") {
@@ -118,7 +126,7 @@ func Run(args []string, out, stderr io.Writer) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	source := provider.New(c)
-	actions := tui.Actions{Copy: func(ctx context.Context, text string) error { return CopyClipboard(ctx, c, text) }, Clipboard: func(ctx context.Context) (string, error) { return Clipboard(ctx, c) }, Open: func(ctx context.Context, raw string) error { return Open(ctx, c, raw) }}
+	actions := tui.Actions{UpdateBranch: source.UpdateBranch, Copy: func(ctx context.Context, text string) error { return CopyClipboard(ctx, c, text) }, Clipboard: func(ctx context.Context) (string, error) { return Clipboard(ctx, c) }, Open: func(ctx context.Context, raw string) error { return Open(ctx, c, raw) }}
 	var prs []core.PR
 	var saved core.Session
 	if *demo {

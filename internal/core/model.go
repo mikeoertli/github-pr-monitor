@@ -129,6 +129,7 @@ func (p PR) Warnings() []string {
 
 // PRDetails describes the latest GitHub metadata for the monitored head.
 type PRDetails struct {
+	ViewerCanUpdateBranch                                 bool
 	Branch, BaseBranch, Author                            string
 	Draft                                                 bool
 	ReviewDecision, Mergeable, MergeStateStatus           string
@@ -138,28 +139,32 @@ type PRDetails struct {
 }
 
 type PR struct {
-	ClosedObservedAt   time.Time  // Fallback retention clock if GitHub omits the closure timestamp.
-	Expired            bool       // Removed by retention rather than a manual dismissal.
-	GitHubRequests     [][]string `json:",omitempty"` // Exact gh API arguments for the most recent update.
-	Details            PRDetails
-	LastAttempt        time.Time
-	Ref                Ref
-	Title, Head, State string
-	Jobs               []Job
-	History            map[string]Job
-	FirstSeen          time.Time
-	Monitored          time.Duration
-	LastSuccess        time.Time
-	Error              string
-	Fresh              bool `json:"-"`
-	MergeNote          string
-	Removed            bool
+	StatusChangedStatus string     // State described by StatusChangedAt, retained across fetch failures.
+	StatusChangedAt     time.Time  // Provider event time, or the first observed transition.
+	StatusTimeObserved  bool       // True when the provider did not supply an event time.
+	ClosedObservedAt    time.Time  // Fallback retention clock if GitHub omits the closure timestamp.
+	Expired             bool       // Removed by retention rather than a manual dismissal.
+	GitHubRequests      [][]string `json:",omitempty"` // Exact gh API arguments for the most recent update.
+	Details             PRDetails
+	LastAttempt         time.Time
+	Ref                 Ref
+	Title, Head, State  string
+	Jobs                []Job
+	History             map[string]Job
+	FirstSeen           time.Time
+	Monitored           time.Duration
+	LastSuccess         time.Time
+	Error               string
+	Fresh               bool `json:"-"`
+	MergeNote           string
+	Removed             bool
 }
 
 func NewPR(ref Ref, now time.Time) PR {
 	return PR{Ref: ref, State: "UNKNOWN", FirstSeen: now, History: map[string]Job{}}
 }
 func (p *PR) Apply(next PR, now time.Time) {
+	previous := *p
 	p.LastAttempt = now
 	if len(next.GitHubRequests) > 0 {
 		p.GitHubRequests = next.GitHubRequests
@@ -204,6 +209,7 @@ func (p *PR) Apply(next PR, now time.Time) {
 	p.Title, p.Head, p.State, p.Jobs = next.Title, next.Head, next.State, next.Jobs
 	p.Details = next.Details
 	p.Error = ""
+	p.recordStatusTime(previous, now)
 	p.Fresh = true
 	p.LastSuccess = next.LastSuccess
 	if p.LastSuccess.IsZero() {
@@ -230,6 +236,10 @@ func (p *PR) Apply(next PR, now time.Time) {
 		record(j)
 	}
 }
+func (p PR) CanUpdateBranch() bool {
+	return p.Fresh && p.Error == "" && p.State == "OPEN" && p.Head != "" && p.Details.ViewerCanUpdateBranch
+}
+
 func (p PR) Closed() bool { return p.State == "MERGED" || p.State == "CLOSED" }
 func (p PR) CompletionTime() time.Time {
 	if p.State == "MERGED" && !p.Details.MergedAt.IsZero() {
@@ -392,7 +402,7 @@ func Fuzzy(query, text string) bool {
 	return true
 }
 
-func Sorted(prs []PR, filter, by string, desc bool) []int {
+func Sorted(prs []PR, filter, by string, desc bool, jiraPrefixes ...string) []int {
 	var result []int
 	for i, p := range prs {
 		if p.Removed {
@@ -423,7 +433,26 @@ func Sorted(prs []PR, filter, by string, desc bool) []int {
 	sort.SliceStable(result, func(i, j int) bool {
 		a, b := prs[result[i]], prs[result[j]]
 		cmp := 0
-		if by == "progress" && a.Progress() != b.Progress() {
+		if by == "jira" {
+			aid, bid := JiraID(a.Title, jiraPrefixes), JiraID(b.Title, jiraPrefixes)
+			// PRs without a ticket stay below the ticket groups in either direction.
+			if (aid == "") != (bid == "") {
+				return aid != ""
+			}
+			cmp = strings.Compare(aid, bid)
+			if cmp == 0 {
+				cmp = strings.Compare(strings.ToLower(a.Ref.Repo), strings.ToLower(b.Ref.Repo))
+			}
+			if cmp == 0 {
+				cmp = strings.Compare(a.Details.BaseBranch, b.Details.BaseBranch)
+			}
+			if cmp == 0 {
+				cmp = strings.Compare(a.Details.Branch, b.Details.Branch)
+			}
+			if cmp == 0 {
+				cmp = a.Ref.Number - b.Ref.Number
+			}
+		} else if by == "progress" && a.Progress() != b.Progress() {
 			if a.Progress() < b.Progress() {
 				cmp = -1
 			} else {

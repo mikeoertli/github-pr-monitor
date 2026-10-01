@@ -1,6 +1,15 @@
 # Changelog
 
-## 0.5.0 — in progress
+## 1.0.0 — Work in progress
+
+- Show the target branch in the table and detect leading Jira ticket IDs case-insensitively, with configurable project prefixes and base URL.
+- Add Jira URL open/copy shortcuts and grouping by ticket, repository, target branch, and source branch (`--sort jira`, also included in completions).
+- Indicate available branch updates and apply them from the TUI with confirmation, protection against changed heads, and a refresh after GitHub accepts the request. Prevent auto-quit while an update is pending.
+- Show relative status ages from provider event times, with explicitly marked first-observed fallbacks that survive refreshes and session restores.
+- Briefly highlight pressed menu items with a bright pink background and black text.
+- Add a README demo GIF and a reproducible VHS tape with `make demo-gif`.
+
+## 0.5.0 — 2026-09-30
 
 - Discover PRs on launch in the default restore mode, preserving saved PRs, history, and dismissals while adding new results without duplicates.
 

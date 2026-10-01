@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -31,7 +32,20 @@ type Jenkins struct {
 	TokenEnv string `toml:"token_env"`
 }
 
+type Jira struct {
+	BaseURL         string   `toml:"base_url"`
+	ProjectPrefixes []string `toml:"project_prefixes"`
+}
+
+func (j Jira) URL(id string) string {
+	if j.BaseURL == "" || id == "" {
+		return ""
+	}
+	return strings.TrimRight(j.BaseURL, "/") + "/browse/" + url.PathEscape(id)
+}
+
 type Config struct {
+	Jira               Jira      `toml:"jira"`
 	CompletedRetention string    `toml:"completed_retention"`
 	NoColor            bool      `toml:"no_color"`
 	Startup            string    `toml:"startup"`
@@ -99,7 +113,7 @@ func (c Config) Validate() error {
 	}{
 		{"startup", c.Startup, []string{"restore", "clipboard", "empty", "auto-discover"}},
 		{"auto_quit", c.AutoQuit, []string{"never", "builds-finished", "all-passing", "all-closed"}},
-		{"sort", c.Sort, []string{"repo", "progress"}},
+		{"sort", c.Sort, []string{"repo", "progress", "jira"}},
 		{"ci_column", c.CIColumn, []string{"auto", "always", "never"}},
 	} {
 		found := false
@@ -132,6 +146,17 @@ func (c Config) Validate() error {
 	}
 	if c.GitHubHost == "" || strings.ContainsAny(c.GitHubHost, "/ :\t\n") {
 		return fmt.Errorf("github_host must be a hostname")
+	}
+	if c.Jira.BaseURL != "" {
+		u, err := url.Parse(c.Jira.BaseURL)
+		if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") {
+			return fmt.Errorf("jira.base_url must be an HTTP(S) server URL without credentials, query, or fragment")
+		}
+	}
+	for _, prefix := range c.Jira.ProjectPrefixes {
+		if !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`).MatchString(prefix) {
+			return fmt.Errorf("jira.project_prefixes must contain project codes such as ABC or OPS (without a ticket number)")
+		}
 	}
 	for _, server := range c.Jenkins {
 		u, err := url.Parse(server.URL)

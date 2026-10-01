@@ -74,13 +74,29 @@ func (m *Model) shortcut(hint string) string {
 	if !ok {
 		return hint
 	}
+	if m.menuPressed(strings.TrimPrefix(key, "["), time.Now()) {
+		return m.paint(menuPressedStyle, hint)
+	}
 	return m.paint(accent, key+"]") + label
 }
 
 // footer separates actions into labeled groups and keeps keycaps readable without color.
 func (m *Model) footer() []string {
+	if m.mode == "update" {
+		p := m.updatePR
+		prompt := fmt.Sprintf("UPDATE %s #%d: merge %s into %s?", p.Ref.Repo, p.Ref.Number, value(p.Details.BaseBranch), value(p.Details.Branch))
+		lines := strings.Split(ansi.Hardwrap(prompt, max(1, m.width), true), "\n")
+		for i := range lines {
+			lines[i] = m.paint(warn, lines[i])
+		}
+		return append(lines, m.shortcut("[Enter] Update branch")+" · "+m.shortcut("[Esc] Cancel"))
+	}
 	if m.mode != "" {
-		return []string{m.paint(accent, m.mode+" › ") + m.input.View(), "[Enter] Apply   ·   [Esc] Cancel"}
+		hint := "[a] Add"
+		if m.mode == "filter" {
+			hint = "[/] Filter"
+		}
+		return []string{m.shortcut(hint) + " › " + m.input.View(), m.shortcut("[Enter] Apply") + "   ·   " + m.shortcut("[Esc] Cancel")}
 	}
 	if m.width < 80 {
 		if m.detailFocus != "" {
@@ -90,13 +106,15 @@ func (m *Model) footer() []string {
 	}
 	groups := [][]string{
 		{"PRS", "[v] Paste", "[a] Add", "[d] Discover", "[x] Dismiss", "[/] Filter", "[s] Sort", "[r] Reverse"},
-		{"INSPECT", "[Enter] Details", "[→] Read details", "[Tab] Check", "[o] Open PR", "[b] Open CI"},
+		{"INSPECT", "[Enter] Details", "[→] Read details", "[←/Esc] Back", "[Tab] Check", "[o] Open PR", "[b] Open CI"},
 		{"COPY", "[y] PR JSON", "[Y] Table JSON", "[c] gh command", "[C] Jenkins curl"},
-		{"WATCH", "[↑↓] Select", "[p] Pause", "[R] Refresh", "[?] Help", "[q] Quit"},
+		{"WATCH", "[↑↓] Select", "[p] Pause", "[R] Refresh", "[u] Update branch", "[?] Help", "[q] Quit"},
 	}
 	if m.detailFocus != "" {
-		groups[1][1], groups[1][2] = "[↑↓] Scroll details", "[←/Esc] Back to table"
-		groups[3][1] = "[PgUp/PgDn] Scroll page"
+		groups[3][1] = "[↑↓/PgUp/PgDn] Scroll details"
+	}
+	if m.showJira() {
+		groups = append(groups, []string{"JIRA", "[J] Open Jira", "[K] Copy Jira URL"})
 	}
 	var lines []string
 	for _, group := range groups {
@@ -126,25 +144,44 @@ type column struct {
 
 func (m *Model) columns() []column {
 	w := max(20, m.width)
-	cols := []column{{"REPOSITORY / PR", max(8, w/4)}, {"PROGRESS", 17}, {"STATUS", 10}}
 	if w < 70 {
 		return []column{{"REPO / PR", max(8, w-36)}, {"PROGRESS", 17}, {"STATUS", 8}}
 	}
-	if w >= 85 {
-		cols = append(cols, column{"BUILD", 8})
+	cols := []column{{"REPOSITORY / PR", max(18, w/6)}, {"PROGRESS", 17}, {"STATUS", 10}}
+	if w >= 100 {
+		cols[2].width = 22
 	}
-	if m.showCI() && w >= 110 {
-		cols = append(cols, column{"CI", 14})
-	}
-	if w >= 140 {
-		cols = append(cols, column{"BRANCH", max(18, w/7)})
-	}
-	if w >= 190 {
-		cols = append(cols, column{"TITLE", w / 5})
+	jiraWidth := 12
+	if w >= 80 && w < 100 && m.showJira() {
+		cols[0].width = 14
+		cols[2].width = 9
+		jiraWidth = 10
 	}
 	used := 6
 	for _, col := range cols {
 		used += col.width + 2
+	}
+	add := func(name string, width, reserve int) {
+		if used+width+2+reserve <= w {
+			cols = append(cols, column{name, width})
+			used += width + 2
+		}
+	}
+	add("TARGET", max(10, min(20, w/10)), 0)
+	if m.showJira() {
+		add("JIRA", jiraWidth, 0)
+	}
+	if w >= 100 {
+		add("BUILD", 7, 12)
+	}
+	if m.showCI() && w >= 110 {
+		add("CI", 12, 12)
+	}
+	if w >= 140 {
+		add("BRANCH", max(14, w/10), 12)
+	}
+	if w >= 190 {
+		add("TITLE", max(16, w/10), 12)
 	}
 	if w-used >= 12 {
 		cols = append(cols, column{"PHASE / WARNING", w - used})
@@ -168,10 +205,7 @@ func (m *Model) tableRow(p core.PR, selected bool, cols []column) string {
 	for _, j := range p.Jobs {
 		estimated = estimated || j.Estimated
 	}
-	status := p.Status()
-	if p.State == "MERGED" || p.State == "CLOSED" {
-		status = strings.ToLower(p.State)
-	}
+	status := p.DisplayStatus()
 	color := muted
 	switch status {
 	case "passed", "merged", "mergeable":
@@ -184,12 +218,24 @@ func (m *Model) tableRow(p core.PR, selected bool, cols []column) string {
 	if !p.Fresh && p.Error == "" {
 		status = "loading"
 	}
+	if _, pending := m.pendingUpdates[p.Ref.URL]; pending {
+		status = "updating"
+		color = accent
+	}
 	marker, fold, issue := "  ", "▸ ", "  "
 	if selected {
 		marker = "› "
 	}
 	if m.expanded[p.Ref.URL] {
 		fold = "▾ "
+	}
+	if p.CanUpdateBranch() {
+		issue = m.paint(accent, "↑ ")
+		phase = "↑ Update available · " + phase
+	}
+	if _, pending := m.pendingUpdates[p.Ref.URL]; pending {
+		issue = m.paint(accent, "↑ ")
+		phase = "Branch update pending"
 	}
 	if warnings := p.Warnings(); len(warnings) > 0 {
 		issue = m.paint(warn, "⚠ ")
@@ -207,11 +253,21 @@ func (m *Model) tableRow(p core.PR, selected bool, cols []column) string {
 		case "PROGRESS":
 			v = m.bar(p, estimated, time.Now())
 		case "STATUS":
-			v = m.paint(color, status)
+			label := status
+			if col.width >= 20 && p.Fresh && p.Error == "" && status != "updating" && status != "stale" {
+				if age := p.StatusAge(time.Now()); age != "" {
+					label += " " + age
+				}
+			}
+			v = m.paint(color, label)
 		case "BUILD":
 			v = build
 		case "CI":
 			v = providers(p)
+		case "TARGET":
+			v = value(p.Details.BaseBranch)
+		case "JIRA":
+			v = value(m.jiraID(p))
 		case "BRANCH":
 			v = value(p.Details.Branch)
 		case "TITLE":
@@ -250,6 +306,13 @@ func (m *Model) details(p core.PR, selected bool) []string {
 	}
 	d := p.Details
 	add(p.Title)
+	if !p.StatusChangedAt.IsZero() {
+		basis := "provider event"
+		if p.StatusTimeObserved {
+			basis = "first observed; exact event time unavailable"
+		}
+		add(fmt.Sprintf("Status: %s %s · %s (%s)", value(p.StatusChangedStatus), p.StatusAge(time.Now()), stamp(p.StatusChangedAt), basis))
+	}
 	if p.Closed() {
 		if retention := m.Config.RetentionDuration(); retention < 0 {
 			add("Kept until dismissed · [x] Dismiss")
@@ -265,6 +328,19 @@ func (m *Model) details(p core.PR, selected bool) []string {
 	}
 	add(fmt.Sprintf("Review: %s · Mergeable: %s · State: %s", value(d.ReviewDecision), mergeable, p.FinalStatus()))
 	add("Merge state: " + value(d.MergeStateStatus))
+	if p.CanUpdateBranch() {
+		add("↑ Update branch available · [u] Merge target into PR branch")
+	}
+	if _, pending := m.pendingUpdates[p.Ref.URL]; pending {
+		add("↑ Branch update requested · waiting for GitHub")
+	}
+	if id := m.jiraID(p); id != "" {
+		link := m.Config.Jira.URL(id)
+		if link == "" {
+			link = "configure [jira] base_url for links"
+		}
+		add("Jira: " + id + " · " + link)
+	}
 	add("Created: " + stamp(d.CreatedAt) + " · GitHub data updated: " + stamp(d.UpdatedAt))
 	if !d.MergedAt.IsZero() {
 		add("Merged: " + stamp(d.MergedAt))
@@ -275,8 +351,10 @@ func (m *Model) details(p core.PR, selected bool) []string {
 	add("Last successful data fetch: " + stamp(p.LastSuccess))
 	if p.Error != "" {
 		add("Last attempt (failed): " + stamp(p.LastAttempt) + " · Showing previous data")
+	} else if _, pending := m.pendingUpdates[p.Ref.URL]; pending {
+		add("Showing previous head while the branch update is pending")
 	} else if !p.Fresh {
-		add("Restored snapshot · awaiting a successful refresh")
+		add("Saved snapshot · awaiting a successful refresh")
 	}
 	add("PR URL: " + p.Ref.URL)
 	for _, issue := range p.Warnings() {
@@ -303,7 +381,15 @@ func (m *Model) details(p core.PR, selected bool) []string {
 		}
 	}
 	add(fmt.Sprintf("Checks: %d passing · %d finished / %d total · [Tab/Shift+Tab] choose check", passed, finished, len(p.Jobs)))
-	add(fmt.Sprintf("Check %d/%d: %s · %s · #%s · %s", jobIndex+1, len(p.Jobs), job.Provider, job.Name, value(job.Number), job.Status))
+	jobStatus := job.Status
+	event := job.StartedAt
+	if core.Terminal(job.Status) {
+		event = job.CompletedAt
+	}
+	if age := core.RelativeTime(event, time.Now()); age != "" {
+		jobStatus += " " + age
+	}
+	add(fmt.Sprintf("Check %d/%d: %s · %s · #%s · %s", jobIndex+1, len(p.Jobs), job.Provider, job.Name, value(job.Number), jobStatus))
 	elapsed := job.Duration
 	if !core.Terminal(job.Status) && !job.StartedAt.IsZero() {
 		elapsed = time.Since(job.StartedAt)
@@ -380,12 +466,24 @@ func (m *Model) View() (view string) {
 	}
 	add(m.paint(muted, header))
 	m.selected() // Keep details attached to the same PR after refreshes and sorting.
-	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
+	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending, m.Config.Jira.ProjectPrefixes...)
 	m.cursor = max(0, min(m.cursor, len(rows)-1))
 	var body []string
 	focus, detailEnd := 0, 0
+	previousGroup := "\x00"
 	for pos, i := range rows {
 		p := m.PRs[i]
+		if m.Config.Sort == "jira" {
+			group := m.jiraID(p)
+			if group != previousGroup {
+				label := group
+				if label == "" {
+					label = "No Jira ticket"
+				}
+				body = append(body, m.paint(accent, "      ── "+label+" ──"))
+				previousGroup = group
+			}
+		}
 		selected := pos == m.cursor
 		if selected {
 			focus = len(body)
@@ -453,6 +551,11 @@ func (m *Model) View() (view string) {
 		if job := m.selectedJob(p); job != nil {
 			label = fmt.Sprintf("Check %d/%d · %s · %s · %s", m.jobCursor+1, len(p.Jobs), job.Provider, job.Name, job.Phase)
 		}
+		if p.Fresh && p.Error == "" && p.DisplayStatus() != "stale" {
+			if age := p.StatusAge(time.Now()); age != "" {
+				label += " · " + p.DisplayStatus() + " " + age
+			}
+		}
 		add(m.paint(accent, core.Clean(label)))
 		if issues := p.Warnings(); len(issues) > 0 {
 			add(m.paint(warn, "⚠ "+core.Clean(strings.Join(issues, " · "))))
@@ -485,10 +588,14 @@ Details   [Enter / Space] Toggle  [→] Focus details  [←] Collapse
           When focused: [↑↓ / PgUp/PgDn] Scroll, [Home/End] First/last
           [← / Esc] Close details and return to table navigation
 Open      [o] GitHub PR           [b] Selected CI URL
+Jira      [J] Open ticket         [K] Copy ticket URL
+          Configure [jira] base_url and project_prefixes in gprm_config.toml
+Update    [u] Confirm merging target into PR branch (↑ = available)
 Copy      [y] Selected PR JSON    [Y] Filtered table JSON
           [c] gh pr view command [C] Jenkins curl command
+          Jira groups sort by repository, target branch, then source branch.
 Arrange   [/] Fuzzy filter        [Esc] Clear filter
-          [s] Repo/progress sort  [r] Reverse sort
+          [s] Repo/progress/Jira  [r] Reverse sort
 Watch     [p] Pause/resume        [R] Refresh now
           [x] Dismiss PR (remembered across launches)
 Quit      [q / Q / Ctrl+C] Quit and print summary
@@ -503,6 +610,9 @@ Filtering limits displayed PRs, polling, and auto-quit; discovery is unchanged.`
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		lines = append(lines, ansi.Truncate(line, max(1, m.width), "…"))
+	}
+	if len(lines) > 0 {
+		lines[0] = ansi.Truncate("gprm · "+m.shortcut("[?] Help")+"    "+m.shortcut("[Esc] Close"), max(1, m.width), "…")
 	}
 	if m.height > 0 && len(lines) > m.height {
 		lines = lines[:m.height]
