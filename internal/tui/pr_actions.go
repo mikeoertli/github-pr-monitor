@@ -54,36 +54,40 @@ func (m *Model) jiraAction(copyURL bool) tea.Cmd {
 	return func() tea.Msg { return openMsg{Err: open(ctx, raw)} }
 }
 
-func (m *Model) startBranchUpdate() {
+func (m *Model) startBranchUpdate(skipConfirmation bool) tea.Cmd {
 	if m.Demo {
 		m.notice = "Branch updates are disabled in the offline demo."
-		return
+		return nil
 	}
 	if m.updating {
 		m.notice = "A branch update is already in progress."
-		return
+		return nil
 	}
 	i := m.selected()
 	if i < 0 {
 		m.notice = "No PR selected."
-		return
+		return nil
 	}
 	p := m.PRs[i]
 	if _, pending := m.pendingUpdates[p.Ref.URL]; pending {
 		m.notice = "Waiting for GitHub to report this branch update."
-		return
+		return nil
 	}
 	if !p.CanUpdateBranch() {
 		m.notice = "Branch update unavailable: refresh first; GitHub must allow an update for your account."
-		return
+		return nil
 	}
 	if m.Actions.UpdateBranch == nil {
 		m.notice = "Branch updates are unavailable."
-		return
+		return nil
 	}
 	m.updatePR = p
+	if skipConfirmation {
+		return m.confirmBranchUpdate()
+	}
 	m.mode = "update"
 	m.notice = "This merges the target into the PR branch and may restart CI."
+	return nil
 }
 
 func (m *Model) confirmBranchUpdate() tea.Cmd {

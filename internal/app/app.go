@@ -33,10 +33,12 @@ func Run(args []string, out, stderr io.Writer) error {
 	retention := flags.String("completed-retention", "", "keep merged/closed PRs for a duration (24h), forever, or 0s")
 	interval := flags.StringP("interval", "i", "", "status refresh interval, e.g. 5s")
 	filter := flags.StringP("filter", "f", "", "fuzzy filter for displayed and polled PRs")
-	sortBy := flags.StringP("sort", "s", "", "repo | progress | jira (ticket, repository, target branch)")
+	sortBy := flags.StringP("sort", "s", "", "comma-separated sort keys: jira,target,repo,branch,progress; jira must lead")
 	gh := flags.String("gh", "", "gh executable path")
 	demo := flags.Bool("demo", false, "offline demo (does not read or write your session)")
 	once := flags.Bool("once", false, "fetch once, print a snapshot and summary, then exit")
+	printConfig := flags.Bool("print-config", false, "print all config options with defaults and comments; does not read credentials")
+	editSettings := flags.BoolP("edit-config", "e", false, "edit the config file with $EDITOR, then validate and exit")
 	initConfig := flags.Bool("init-config", false, "create a commented config file without overwriting an existing one")
 	version := flags.BoolP("version", "V", false, "print version")
 	noColor := flags.Bool("no-color", false, "disable color and text styling")
@@ -50,7 +52,11 @@ Jira: add this section to your TOML settings:
   base_url = "https://jira.example.com"
   project_prefixes = ["ABC", "OPS"]
 Leading title IDs match case-insensitively; an empty prefix list accepts any project.
-TUI: J opens Jira, K copies its URL, s cycles sorting, u confirms a branch update.
+Config: --print-config lists every setting; --edit-config opens $EDITOR.
+Set sort = "jira,target,repo" before TOML sections to save that default order.
+Unticketed PRs follow Jira groups, ordered by target then repository.
+TUI: g/c/J browse PR/CI/Jira, G/C copy commands, K copies Jira URL.
+     s cycles sorting; u confirms a branch update, U updates immediately.
 `)
 	}
 	// Completion runs before configuration, credentials, or the TUI are touched.
@@ -71,6 +77,13 @@ TUI: J opens Jira, K copies its URL, s cycles sorting, u confirms a branch updat
 		fmt.Fprintln(out, "gprm "+project.Version())
 		return nil
 	}
+	if *printConfig {
+		_, err := io.WriteString(out, config.Example)
+		return err
+	}
+	if *editSettings {
+		return editConfig(*cfgPath, out, stderr)
+	}
 	if *initConfig {
 		if err := config.WriteExample(*cfgPath); err != nil {
 			return err
@@ -79,6 +92,9 @@ TUI: J opens Jira, K copies its URL, s cycles sorting, u confirms a branch updat
 		return nil
 	}
 	c := config.Defaults()
+	if *demo {
+		c.TargetBranchIgnoredPrefixes = []string{"support/"}
+	}
 	var err error
 	if !*demo {
 		c, err = config.Load(*cfgPath)
@@ -287,7 +303,7 @@ func Clipboard(ctx context.Context, c config.Config) (string, error) {
 	return string(b), nil
 }
 
-// CopyClipboard sends JSON via stdin, keeping its contents out of command arguments.
+// CopyClipboard sends text via stdin, keeping its contents out of command arguments.
 func CopyClipboard(ctx context.Context, c config.Config, text string) error {
 	path, args := c.Tools.ClipboardWrite, append([]string(nil), c.Tools.ClipboardWriteArgs...)
 	if path == "" {
@@ -312,7 +328,7 @@ func CopyClipboard(ctx context.Context, c config.Config, text string) error {
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdin = strings.NewReader(text)
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("could not copy JSON; configure tools.clipboard_write")
+		return fmt.Errorf("could not copy text; configure tools.clipboard_write")
 	}
 	return nil
 }

@@ -24,6 +24,7 @@ type Actions struct {
 	Copy         func(context.Context, string) error
 }
 type Model struct {
+	helpScroll                                  int
 	menuKey                                     string
 	menuKeyUntil                                time.Time
 	updatePR                                    core.PR
@@ -63,7 +64,6 @@ type openMsg struct{ Err error }
 type copyMsg struct {
 	Label string
 	Err   error
-	Count int
 }
 
 func New(ctx context.Context, c config.Config, prs []core.PR, source Source, actions Actions, state string, demo bool) *Model {
@@ -403,8 +403,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = core.Clean(msg.Err.Error())
 		} else if msg.Label != "" {
 			m.notice = "Copied " + msg.Label + "."
-		} else {
-			m.notice = fmt.Sprintf("Copied JSON for %d PR(s).", msg.Count)
 		}
 	case openMsg:
 		if msg.Err != nil {
@@ -470,12 +468,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 		if m.help {
-			if key == "?" || key == "esc" || key == "q" {
+			limit := max(0, len(m.helpBody())-m.helpPageHeight())
+			switch key {
+			case "?", "esc", "q":
 				m.help = false
-			}
-			if key == "Q" {
+			case "Q":
 				return m, tea.Quit
+			case "up", "k":
+				m.helpScroll--
+			case "down", "j":
+				m.helpScroll++
+			case "pgup":
+				m.helpScroll -= m.helpPageHeight()
+			case "pgdown":
+				m.helpScroll += m.helpPageHeight()
+			case "home":
+				m.helpScroll = 0
+			case "end":
+				m.helpScroll = limit
 			}
+			m.helpScroll = max(0, min(m.helpScroll, limit))
 			return m, nil
 		}
 		if i := m.selected(); i >= 0 && m.detailFocus != "" {
@@ -494,9 +506,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailScroll -= m.detailHeight()
 			case "pgdown":
 				m.detailScroll += m.detailHeight()
-			case "home", "g":
+			case "home":
 				m.detailScroll = 0
-			case "end", "G":
+			case "end":
 				m.detailScroll = limit
 			case "right":
 				return m, nil
@@ -518,6 +530,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg { return tea.QuitMsg{} })
 		case "?":
 			m.help = true
+			m.helpScroll = 0
 		case "a":
 			return m, m.startInput("add")
 		case "v", "ctrl+v":
@@ -548,11 +561,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected()
 			m.jobCursor = 0
 			m.detailScroll = 0
-		case "home", "g":
+		case "home":
 			m.cursor = 0
 			m.jobCursor = 0
 			m.detailScroll = 0
-		case "end", "G":
+		case "end":
 			m.cursor = len(m.PRs)
 			m.selected()
 			m.jobCursor = 0
@@ -571,10 +584,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.detailScroll = 0
 			}
-		case "c", "C":
+		case "G", "C":
 			return m, m.copyCommand(key == "C")
-		case "y", "Y":
-			return m, m.copyJSON(key == "Y")
 		case "tab":
 			m.jobCursor++
 			m.detailScroll = 0
@@ -583,8 +594,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailScroll = 0
 		case "J", "K":
 			return m, m.jiraAction(key == "K")
-		case "u":
-			m.startBranchUpdate()
+		case "u", "U":
+			return m, m.startBranchUpdate(key == "U")
 		case "s":
 			if m.Config.Sort == "repo" {
 				m.Config.Sort = "progress"
@@ -611,13 +622,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.notice = "PR dismissed; discovery will skip it. Paste it again to restore it."
 				m.save()
 			}
-		case "o", "b":
+		case "g", "c":
 			i := m.selected()
 			if i < 0 {
 				return m, nil
 			}
 			raw := m.PRs[i].Ref.URL
-			if key == "b" {
+			if key == "c" {
 				job := m.selectedJob(m.PRs[i])
 				if job == nil || job.URL == "" {
 					m.notice = "No build URL for this check."

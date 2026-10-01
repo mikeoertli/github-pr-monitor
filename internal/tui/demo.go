@@ -67,7 +67,7 @@ func DemoSnapshots(refs []core.Ref, step int) []core.PR {
 		}
 		if i%5 == 0 {
 			details.ViewerCanUpdateBranch = true
-			details.BaseBranch = "release/1"
+			details.BaseBranch = "support/release/1"
 		}
 		if i%5 == 4 {
 			job.Warning = "Jenkins pipeline stages unavailable (HTTP 403); using build status"

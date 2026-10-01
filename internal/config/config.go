@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/mikeoertli/github-pr-monitor/internal/core"
 )
 
 type Tools struct {
@@ -45,20 +46,21 @@ func (j Jira) URL(id string) string {
 }
 
 type Config struct {
-	Jira               Jira      `toml:"jira"`
-	CompletedRetention string    `toml:"completed_retention"`
-	NoColor            bool      `toml:"no_color"`
-	Startup            string    `toml:"startup"`
-	AutoQuit           string    `toml:"auto_quit"`
-	Interval           string    `toml:"interval"`
-	Timeout            string    `toml:"request_timeout"`
-	Sort               string    `toml:"sort"`
-	Descending         bool      `toml:"descending"`
-	CIColumn           string    `toml:"ci_column"`
-	GitHubHost         string    `toml:"github_host"`
-	DiscoveryLimit     int       `toml:"discovery_limit"`
-	Tools              Tools     `toml:"tools"`
-	Jenkins            []Jenkins `toml:"jenkins"`
+	TargetBranchIgnoredPrefixes []string  `toml:"target_branch_ignored_prefixes"`
+	Jira                        Jira      `toml:"jira"`
+	CompletedRetention          string    `toml:"completed_retention"`
+	NoColor                     bool      `toml:"no_color"`
+	Startup                     string    `toml:"startup"`
+	AutoQuit                    string    `toml:"auto_quit"`
+	Interval                    string    `toml:"interval"`
+	Timeout                     string    `toml:"request_timeout"`
+	Sort                        string    `toml:"sort"`
+	Descending                  bool      `toml:"descending"`
+	CIColumn                    string    `toml:"ci_column"`
+	GitHubHost                  string    `toml:"github_host"`
+	DiscoveryLimit              int       `toml:"discovery_limit"`
+	Tools                       Tools     `toml:"tools"`
+	Jenkins                     []Jenkins `toml:"jenkins"`
 }
 
 func Defaults() Config {
@@ -107,13 +109,15 @@ func Load(path string) (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if _, err := core.SortKeys(c.Sort); err != nil {
+		return err
+	}
 	for _, v := range []struct {
 		name, value string
 		allowed     []string
 	}{
 		{"startup", c.Startup, []string{"restore", "clipboard", "empty", "auto-discover"}},
 		{"auto_quit", c.AutoQuit, []string{"never", "builds-finished", "all-passing", "all-closed"}},
-		{"sort", c.Sort, []string{"repo", "progress", "jira"}},
 		{"ci_column", c.CIColumn, []string{"auto", "always", "never"}},
 	} {
 		found := false

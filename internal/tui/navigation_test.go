@@ -120,7 +120,7 @@ func TestFocusedDetailsResizeAndFooter(t *testing.T) {
 			m.Update(key("left"))
 		}
 		footer := strings.Join(m.footer(), "\n")
-		for _, heading := range []string{"PRS", "INSPECT", "COPY", "WATCH"} {
+		for _, heading := range []string{"BROWSE", "PRS", "INSPECT", "COPY", "WATCH"} {
 			if !strings.Contains(footer, heading) {
 				t.Fatalf("missing footer heading %s", heading)
 			}

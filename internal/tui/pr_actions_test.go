@@ -19,7 +19,7 @@ func TestJiraColumnsGroupingAndActions(t *testing.T) {
 	m.PRs[0].Title = "abc-42: Improve caching"
 	m.PRs[1].Title = "ABC-42: Update client"
 	m.PRs[0].Details.BaseBranch = "release/1"
-	m.Config.Sort = "jira"
+	m.Config.Sort = "jira,target,repo"
 	m.Update(tea.WindowSizeMsg{Width: 200, Height: 45})
 	view := m.View()
 	for _, want := range []string{"TARGET", "JIRA", "release/1", "── ABC-42 ──", "No Jira ticket", "[J] Open Jira", "[K] Copy Jira URL"} {
@@ -164,12 +164,14 @@ func TestUnavailableBranchUpdatesAndFailures(t *testing.T) {
 		func(m *Model) { m.PRs[0].Details.ViewerCanUpdateBranch = false }, func(m *Model) { m.updating = true },
 		func(m *Model) { m.pendingUpdates = map[string]string{m.PRs[0].Ref.URL: m.PRs[0].Head} },
 	} {
-		m := updateModel()
-		change(m)
-		m.Actions.UpdateBranch = func(context.Context, core.PR) error { t.Fatal("unavailable update sent"); return nil }
-		m.Update(key("u"))
-		if m.mode == "update" || m.notice == "" {
-			t.Fatal("unavailable update offered")
+		for _, action := range []string{"u", "U"} {
+			m := updateModel()
+			change(m)
+			m.Actions.UpdateBranch = func(context.Context, core.PR) error { t.Fatal("unavailable update sent"); return nil }
+			_, cmd := m.Update(key(action))
+			if cmd != nil || m.mode == "update" || m.notice == "" {
+				t.Fatal("unavailable update offered")
+			}
 		}
 	}
 	m := updateModel()
@@ -206,5 +208,102 @@ func TestBranchUpdateWhilePollIsInFlight(t *testing.T) {
 	_, refresh = m.Update(pollMsg{PRs: []core.PR{old}})
 	if refresh == nil || m.PRs[0].Fresh || m.QuitReason != "" {
 		t.Fatal("in-flight snapshot bypassed pending update")
+	}
+}
+
+func TestBranchUpdateFromSelectedRowAndDetails(t *testing.T) {
+	for _, width := range []int{70, 200} {
+		for _, focused := range []bool{false, true} {
+			for _, action := range []string{"u", "U"} {
+				m := updateModel()
+				m.width = width
+				m.Config.NoColor = true
+				selected := m.PRs[0]
+				if focused {
+					m.Update(key("right"))
+				}
+				footer := strings.Join(m.footer(), "\n")
+				for _, hint := range []string{"[u] Update branch", "[U] Update now"} {
+					if !strings.Contains(footer, hint) {
+						t.Fatalf("missing %q in footer: %s", hint, footer)
+					}
+				}
+				calls := 0
+				m.Actions.UpdateBranch = func(_ context.Context, p core.PR) error {
+					calls++
+					if p.Ref != selected.Ref || p.Head != selected.Head {
+						t.Fatal("wrong selected PR/head")
+					}
+					return nil
+				}
+				_, cmd := m.Update(key(action))
+				if action == "u" {
+					if cmd != nil || m.mode != "update" || calls != 0 {
+						t.Fatal("lowercase u must require confirmation")
+					}
+					_, cmd = m.Update(key("enter"))
+				} else if m.mode != "" {
+					t.Fatal("uppercase U must skip confirmation")
+				}
+				if cmd == nil || !m.updating || m.expanded[selected.Ref.URL] != focused {
+					t.Fatal("update must start without changing detail expansion")
+				}
+				if _, duplicate := m.Update(key("U")); duplicate != nil {
+					t.Fatal("duplicate update allowed")
+				}
+				_, refresh := m.Update(cmd())
+				if calls != 1 || refresh == nil || m.pendingUpdates[selected.Ref.URL] != selected.Head {
+					t.Fatal("update must refresh and track the previous head")
+				}
+			}
+		}
+	}
+}
+
+func TestTargetBranchPrefixesOnlyShortenTableLabels(t *testing.T) {
+	m := updateModel()
+	m.Config.NoColor = true
+	m.Config.TargetBranchIgnoredPrefixes = []string{"", "support/", "support/team/"}
+	for _, tc := range []struct{ branch, label string }{
+		{"support/release-1", "release-1"},
+		{"support/team/release-1", "release-1"},
+		{"support/support/release-1", "support/release-1"},
+		{"Support/release-1", "Support/release-1"},
+		{"feature/support/release-1", "feature/support/release-1"},
+		{"support/", "support/"},
+		{"main", "main"},
+	} {
+		m.PRs[0].Details.BaseBranch = tc.branch
+		row := m.tableRow(m.PRs[0], false, []column{{"TARGET", 40}})
+		fields := strings.Fields(row)
+		if fields[len(fields)-1] != tc.label || m.PRs[0].Details.BaseBranch != tc.branch {
+			t.Fatalf("branch %q: unexpected table label %q", tc.branch, row)
+		}
+	}
+	full := "support/release-1"
+	m.PRs[0].Details.BaseBranch = full
+	if strings.Contains(m.tableRow(m.PRs[0], false, []column{{"TARGET", 40}}), "support/") {
+		t.Fatal("table prefix not hidden")
+	}
+	if !strings.Contains(strings.Join(m.details(m.PRs[0], true), "\n"), full) {
+		t.Fatal("details lost full target branch")
+	}
+	m.SetFilter("support/")
+	if m.selected() < 0 {
+		t.Fatal("filter no longer matches full target")
+	}
+	var updated string
+	m.Actions.UpdateBranch = func(_ context.Context, p core.PR) error { updated = p.Details.BaseBranch; return nil }
+	m.Update(key("u"))
+	if !strings.Contains(strings.Join(m.footer(), "\n"), full) {
+		t.Fatal("confirmation lost full target branch")
+	}
+	_, cmd := m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("missing update command")
+	}
+	cmd()
+	if updated != full {
+		t.Fatal("update used shortened branch")
 	}
 }

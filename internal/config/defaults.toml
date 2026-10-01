@@ -5,8 +5,14 @@ auto_quit = "all-closed" # never | builds-finished | all-passing | all-closed
 completed_retention = "24h" # time since merge/closure; forever keeps until dismissed; 0s hides immediately
 interval = "5s"
 request_timeout = "20s"
-sort = "repo" # repo | progress | jira
+# Default order: comma-separated jira, target, repo, branch, progress.
+# jira is shorthand for jira,target,repo,branch and must lead when included.
+# Unticketed PRs follow ticket groups, ordered by the remaining keys.
+sort = "repo" # e.g. "jira,target,repo" or "target,repo"
 descending = false
+# Hide one leading prefix in the TARGET column only (literal, case-sensitive).
+# Longest match wins; full names remain in details, sorting, filtering, and updates.
+target_branch_ignored_prefixes = [] # e.g. ["support/"]
 no_color = false # also controlled by --no-color and NO_COLOR
 ci_column = "auto" # auto | always | never
 github_host = "github.com"
@@ -22,7 +28,7 @@ gh = "gh" # executable name or absolute path
 # Empty clipboard/open paths select the platform default.
 clipboard = ""
 clipboard_args = []
-clipboard_write = "" # JSON is sent to this command on stdin
+clipboard_write = "" # Text is sent to this command on stdin
 clipboard_write_args = []
 open = ""
 open_args = []

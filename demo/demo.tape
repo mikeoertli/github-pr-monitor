@@ -1,5 +1,6 @@
 # Regenerate from the repository root with `make demo-gif`.
-# Pressed menu items flash pink with black text; no key-history overlay.
+# Pressed menu items flash pink with black text.
+# The footer shows u/U for branch updates; do not invoke remote-update actions.
 # Entirely offline: no credentials, saved session, browser, or clipboard access.
 Output assets/gprm-demo.gif
 Set Shell "bash"
@@ -21,24 +22,32 @@ Hide
 Type "unset PROMPT_COMMAND NO_COLOR; clear"
 Enter
 Show
-Type "./bin/gprm --demo --interval 2s"
+Type "./bin/gprm --demo --interval 2s --sort jira,target,repo"
 Enter
 Wait+Screen /5 PRs/
+# Opening PR/CI links leads the footer; keep browser actions offline.
+Wait+Screen /BROWSE.*Open PR.*Open CI/
+Wait+Screen /PRS.*Add/
 Sleep 3s
 
-# Repo -> progress -> Jira: correlate repositories and target branches.
+# Cycle repo -> progress -> Jira; start with the configured compound order.
+Type "s"
+Sleep 2s
 Type "s"
 Sleep 2s
 Type "s"
 Wait+Screen /sort jira/
 Sleep 3s
 
-# Focus the first ticket's details, then scroll to the CI URL.
-Type "g"
+# The demo hides support/ in TARGET, while details retain the full branch name.
+Down
 Right
 Wait+Screen /DETAILS/
+Wait+Screen /support.release.1/
+Wait+Screen /PR OVERVIEW/
 Sleep 3s
 PageDown
+Wait+Screen /CI CHECKS/
 Sleep 3s
 Left
 Sleep 1s
@@ -69,7 +78,9 @@ Escape
 Type "p"
 Sleep 1s
 Type "?"
-Sleep 3s
+Wait+Screen /CONFIGURATION/
+Wait+Screen /LEGEND/
+Sleep 5s
 Escape
 Type "q"
 Wait+Screen /OBSERVED RUNS/

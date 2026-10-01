@@ -55,11 +55,11 @@ func TestCompletionValuesAndFlags(t *testing.T) {
 		{[]string{"-m", ""}, []string{"restore", "clipboard", "empty", "auto-discover", ":4"}},
 		{[]string{"--filter", ""}, []string{":4"}},
 		{[]string{"-f", ""}, []string{":4"}},
-		{[]string{"--sort", ""}, []string{"repo", "progress", "jira", ":4"}},
+		{[]string{"--sort", ""}, []string{"repo", "progress", "jira", "jira,target,repo", "target,repo", ":4"}},
 		{[]string{"--interval", ""}, []string{"5s", "10s", "1m"}},
 		{[]string{"--completed-retention", ""}, []string{"24h", "forever", "0s"}},
 		{[]string{"completion", ""}, []string{"bash", "zsh", "fish", "powershell"}},
-		{[]string{"--"}, []string{"--filter", "--config", "--state", "--startup", "--auto-quit", "--interval", "--sort", "--gh", "--demo", "--once", "--init-config", "--version", "--no-color"}},
+		{[]string{"--"}, []string{"--filter", "--config", "--state", "--startup", "--auto-quit", "--interval", "--sort", "--gh", "--demo", "--once", "--init-config", "--print-config", "--edit-config", "--version", "--no-color"}},
 	} {
 		var out, stderr bytes.Buffer
 		if err := Run(append([]string{"__complete"}, tc.args...), &out, &stderr); err != nil {

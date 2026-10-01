@@ -58,12 +58,12 @@ func TestConfigDefaultsAndOverrides(t *testing.T) {
 	if err = WriteExample(path); err == nil {
 		t.Fatal("overwrote config")
 	}
-	os.WriteFile(path, []byte("startup='clipboard'\nauto_quit='never'\ninterval='12s'\n[tools]\ngh='/path with spaces/gh'\n"), 0600)
+	os.WriteFile(path, []byte("startup='clipboard'\nauto_quit='never'\ninterval='12s'\ntarget_branch_ignored_prefixes=['support/']\n[tools]\ngh='/path with spaces/gh'\n"), 0600)
 	c, err = Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Startup != "clipboard" || c.AutoQuit != "never" || c.Interval != "12s" || c.Timeout != "20s" {
+	if c.Startup != "clipboard" || c.AutoQuit != "never" || c.Interval != "12s" || c.Timeout != "20s" || len(c.TargetBranchIgnoredPrefixes) != 1 || c.TargetBranchIgnoredPrefixes[0] != "support/" {
 		t.Fatal(c)
 	}
 	for _, mode := range []string{"restore", "clipboard", "empty", "auto-discover"} {
@@ -131,6 +131,22 @@ func TestJiraConfiguration(t *testing.T) {
 		bad.Jira.ProjectPrefixes = []string{prefix}
 		if bad.Validate() == nil {
 			t.Errorf("accepted prefix %q", prefix)
+		}
+	}
+}
+
+func TestCompoundSortConfig(t *testing.T) {
+	c := Defaults()
+	for _, spec := range []string{"repo", "progress", "jira", "jira,target,repo", "jira,repo,target", "target,repo", "target, progress, repo"} {
+		c.Sort = spec
+		if err := c.Validate(); err != nil {
+			t.Fatalf("%s: %v", spec, err)
+		}
+	}
+	for _, spec := range []string{"", "jira,,repo", "repo,repo", "repo,jira", "unknown"} {
+		c.Sort = spec
+		if c.Validate() == nil {
+			t.Fatalf("accepted %q", spec)
 		}
 	}
 }

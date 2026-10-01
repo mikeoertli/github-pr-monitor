@@ -2,6 +2,7 @@
 package core
 
 import (
+	"cmp"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -430,44 +431,47 @@ func Sorted(prs []PR, filter, by string, desc bool, jiraPrefixes ...string) []in
 			result = append(result, i)
 		}
 	}
+	keys, err := SortKeys(by)
+	if err != nil {
+		keys = []string{"repo"}
+	}
+	// Deterministic tie breakers also handle PRs without any recognized ticket.
+	keys = append(keys, "repo", "branch")
 	sort.SliceStable(result, func(i, j int) bool {
 		a, b := prs[result[i]], prs[result[j]]
-		cmp := 0
-		if by == "jira" {
-			aid, bid := JiraID(a.Title, jiraPrefixes), JiraID(b.Title, jiraPrefixes)
-			// PRs without a ticket stay below the ticket groups in either direction.
-			if (aid == "") != (bid == "") {
-				return aid != ""
+		order := 0
+		for _, key := range keys {
+			switch key {
+			case "jira":
+				aid, bid := JiraID(a.Title, jiraPrefixes), JiraID(b.Title, jiraPrefixes)
+				// Unticketed PRs stay last even when the order is reversed.
+				if (aid == "") != (bid == "") {
+					return aid != ""
+				}
+				order = strings.Compare(aid, bid)
+			case "target":
+				order = strings.Compare(a.Details.BaseBranch, b.Details.BaseBranch)
+			case "repo":
+				order = strings.Compare(strings.ToLower(a.Ref.Repo), strings.ToLower(b.Ref.Repo))
+			case "branch":
+				order = strings.Compare(a.Details.Branch, b.Details.Branch)
+			case "progress":
+				order = cmp.Compare(a.Progress(), b.Progress())
 			}
-			cmp = strings.Compare(aid, bid)
-			if cmp == 0 {
-				cmp = strings.Compare(strings.ToLower(a.Ref.Repo), strings.ToLower(b.Ref.Repo))
+			if order != 0 {
+				break
 			}
-			if cmp == 0 {
-				cmp = strings.Compare(a.Details.BaseBranch, b.Details.BaseBranch)
-			}
-			if cmp == 0 {
-				cmp = strings.Compare(a.Details.Branch, b.Details.Branch)
-			}
-			if cmp == 0 {
-				cmp = a.Ref.Number - b.Ref.Number
-			}
-		} else if by == "progress" && a.Progress() != b.Progress() {
-			if a.Progress() < b.Progress() {
-				cmp = -1
-			} else {
-				cmp = 1
-			}
-		} else {
-			cmp = strings.Compare(strings.ToLower(a.Ref.Repo), strings.ToLower(b.Ref.Repo))
-			if cmp == 0 {
-				cmp = a.Ref.Number - b.Ref.Number
-			}
+		}
+		if order == 0 {
+			order = cmp.Compare(a.Ref.Number, b.Ref.Number)
+		}
+		if order == 0 {
+			order = strings.Compare(a.Ref.URL, b.Ref.URL)
 		}
 		if desc {
-			return cmp > 0
+			return order > 0
 		}
-		return cmp < 0
+		return order < 0
 	})
 	return result
 }

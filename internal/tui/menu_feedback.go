@@ -23,7 +23,7 @@ func (m *Model) recordMenuKey(key string) {
 		m.menuKey = ""
 		return
 	}
-	aliases := map[string]string{"right": "→", "left": "←", "up": "↑", "down": "↓", "j": "↓", "k": "↑", "pgdown": "PgDn", "pgup": "PgUp", "enter": "Enter", "esc": "Esc", " ": "Enter", "tab": "Tab", "shift+tab": "Tab", "ctrl+v": "v", "Q": "q"}
+	aliases := map[string]string{"right": "→", "left": "←", "up": "↑", "down": "↓", "j": "↓", "k": "↑", "pgdown": "PgDn", "pgup": "PgUp", "home": "Home", "end": "End", "enter": "Enter", "esc": "Esc", " ": "Enter", "tab": "Tab", "shift+tab": "Tab", "ctrl+v": "v", "Q": "q"}
 	if alias, ok := aliases[key]; ok {
 		key = alias
 	}

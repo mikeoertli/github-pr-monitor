@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -21,7 +20,7 @@ func TestDetailsWarningsAndResponsiveLayout(t *testing.T) {
 	p.Jobs[0].Warning = "Could not retrieve Jenkins build: HTTP 403"
 	m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
 	view := m.View()
-	for _, want := range []string{"⚠ ▸", "HTTP 403", "BRANCH", "TITLE", "INSPECT", "[o] Open PR", "[b] Open CI"} {
+	for _, want := range []string{"⚠ ▸", "HTTP 403", "BRANCH", "TITLE", "INSPECT", "[g] Open PR", "[c] Open CI"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("missing %q in view:\n%s", want, view)
 		}
@@ -72,7 +71,7 @@ func TestDetailsWarningsAndResponsiveLayout(t *testing.T) {
 	}
 }
 
-func TestOpenAndCopySelectedOrFilteredSnapshots(t *testing.T) {
+func TestOpenSelectedPRAndCheck(t *testing.T) {
 	m := demoModel()
 	m.filter = "platform"
 	p := &m.PRs[m.selected()]
@@ -80,10 +79,9 @@ func TestOpenAndCopySelectedOrFilteredSnapshots(t *testing.T) {
 	second.URL = "https://ci.example.com/job/second/12/"
 	second.Name = "Second check"
 	p.Jobs = append(p.Jobs, second)
-	var opened, copied string
+	var opened string
 	m.Actions.Open = func(_ context.Context, raw string) error { opened = raw; return nil }
-	m.Actions.Copy = func(_ context.Context, raw string) error { copied = raw; return nil }
-	for _, tc := range []struct{ key, want string }{{"o", p.Ref.URL}, {"b", p.Jobs[0].URL}} {
+	for _, tc := range []struct{ key, want string }{{"g", p.Ref.URL}, {"c", p.Jobs[0].URL}} {
 		_, cmd := m.Update(key(tc.key))
 		m.Update(cmd())
 		if opened != tc.want {
@@ -91,68 +89,10 @@ func TestOpenAndCopySelectedOrFilteredSnapshots(t *testing.T) {
 		}
 	}
 	m.Update(tea.KeyMsg{Type: tea.KeyTab})
-	_, cmd := m.Update(key("b"))
+	_, cmd := m.Update(key("c"))
 	m.Update(cmd())
 	if opened != second.URL {
 		t.Fatal("did not open selected check")
-	}
-	_, cmd = m.Update(key("y"))
-	// Subsequent refreshes cannot alter the snapshot already queued for copying.
-	oldTitle := p.Title
-	p.Title = "new title"
-	m.Update(cmd())
-	var one snapshot
-	if err := json.Unmarshal([]byte(copied), &one); err != nil {
-		t.Fatal(err)
-	}
-	if one.Title != oldTitle || one.Ref.URL != p.Ref.URL || len(one.Jobs) != 2 || !one.Fresh {
-		t.Fatalf("bad selected snapshot: %+v", one)
-	}
-	p.Apply(core.PR{Error: "refresh failed"}, time.Now())
-	_, cmd = m.Update(key("y"))
-	m.Update(cmd())
-	if err := json.Unmarshal([]byte(copied), &one); err != nil {
-		t.Fatal(err)
-	}
-	if one.Fresh || one.Error != "refresh failed" || one.LastAttempt.IsZero() || one.LastSuccess.IsZero() {
-		t.Fatal("copy hid stale data")
-	}
-	m.PRs[1].Removed = true
-	m.filter = "acme"
-	m.Config.Descending = true
-	m.height = 12
-	_, cmd = m.Update(key("Y"))
-	m.Update(cmd())
-	var all []snapshot
-	if err := json.Unmarshal([]byte(copied), &all); err != nil {
-		t.Fatal(err)
-	}
-	rows := core.Sorted(m.PRs, m.filter, m.Config.Sort, m.Config.Descending)
-	if len(all) != len(rows) {
-		t.Fatal("copy lost offscreen rows or included removed PR")
-	}
-	for n, i := range rows {
-		if all[n].Ref.URL != m.PRs[i].Ref.URL {
-			t.Fatal("copied order differs from table")
-		}
-	}
-	m.filter = "platform"
-	_, cmd = m.Update(key("Y"))
-	m.Update(cmd())
-	json.Unmarshal([]byte(copied), &all)
-	if len(all) != 1 {
-		t.Fatal("copy ignored filter")
-	}
-	m.Actions.Copy = func(context.Context, string) error { return errors.New("clipboard unavailable") }
-	_, cmd = m.Update(key("y"))
-	m.Update(cmd())
-	if !strings.Contains(m.notice, "clipboard unavailable") {
-		t.Fatal("copy error hidden")
-	}
-	m.filter = "no-such-repository"
-	_, cmd = m.Update(key("Y"))
-	if cmd != nil {
-		t.Fatal("empty table overwrites clipboard")
 	}
 }
 
@@ -161,7 +101,7 @@ func TestCopyRequestMenuActions(t *testing.T) {
 	m.filter = "platform"
 	var copied string
 	m.Actions.Copy = func(_ context.Context, text string) error { copied = text; return nil }
-	for _, tc := range []struct{ key, want, label string }{{"c", "pr view ", "gh pr view command"}, {"C", "/api/json", "Jenkins curl command"}} {
+	for _, tc := range []struct{ key, want, label string }{{"G", "pr view ", "gh pr view command"}, {"C", "/api/json", "Jenkins curl command"}} {
 		_, cmd := m.Update(key(tc.key))
 		if cmd == nil {
 			t.Fatal(m.notice)
@@ -172,7 +112,7 @@ func TestCopyRequestMenuActions(t *testing.T) {
 		}
 	}
 	view := m.View()
-	for _, hint := range []string{"[c] gh command", "[C] Jenkins curl"} {
+	for _, hint := range []string{"[G] gh command", "[C] Jenkins curl"} {
 		if !strings.Contains(view, hint) {
 			t.Fatalf("menu lacks %s", hint)
 		}
@@ -184,7 +124,7 @@ func TestCopyRequestMenuActions(t *testing.T) {
 	}
 	m.filter = "platform"
 	m.Actions.Copy = func(context.Context, string) error { return errors.New("copy failed") }
-	_, cmd = m.Update(key("c"))
+	_, cmd = m.Update(key("G"))
 	m.Update(cmd())
 	if m.notice != "copy failed" {
 		t.Fatal("command copy error hidden")
@@ -223,5 +163,34 @@ func TestMergedRowAndSourceDataTimes(t *testing.T) {
 	view = m.View()
 	if !strings.Contains(view, "Last successful data fetch: "+stamp(p.LastSuccess)) || !strings.Contains(view, "Last attempt (failed): "+stamp(p.LastAttempt)) {
 		t.Fatal("failed attempt confused with data freshness")
+	}
+}
+
+func TestOpenAndCommandShortcutsWhileDetailsFocused(t *testing.T) {
+	m := demoModel()
+	m.filter = "platform"
+	m.Update(key("right"))
+	m.Update(key("end"))
+	selected, scroll := m.selected(), m.detailScroll
+	p := m.PRs[selected]
+	var opened, copied string
+	m.Actions.Open = func(_ context.Context, raw string) error { opened = raw; return nil }
+	m.Actions.Copy = func(_ context.Context, raw string) error { copied = raw; return nil }
+	for _, tc := range []struct{ key, url, command string }{
+		{"g", p.Ref.URL, ""}, {"c", p.Jobs[0].URL, ""},
+		{"G", "", "pr view "}, {"C", "", "/api/json"},
+	} {
+		opened, copied = "", ""
+		_, cmd := m.Update(key(tc.key))
+		if cmd == nil {
+			t.Fatalf("%s did not trigger its action: %s", tc.key, m.notice)
+		}
+		m.Update(cmd())
+		if opened != tc.url || (tc.command == "" && copied != "") || (tc.command != "" && !strings.Contains(copied, tc.command)) {
+			t.Fatalf("%s: opened %q, copied %q", tc.key, opened, copied)
+		}
+		if m.selected() != selected || m.detailScroll != scroll || m.detailFocus != p.Ref.URL {
+			t.Fatalf("%s changed navigation instead of acting on the selected PR", tc.key)
+		}
 	}
 }

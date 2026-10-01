@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +8,7 @@ import (
 	"github.com/mikeoertli/github-pr-monitor/internal/core"
 )
 
-func TestNoChecksTableDetailsAndJSON(t *testing.T) {
+func TestNoChecksTableDetails(t *testing.T) {
 	m := demoModel()
 	m.Config.NoColor = true
 	m.width, m.height = 170, 40
@@ -32,10 +31,7 @@ func TestNoChecksTableDetailsAndJSON(t *testing.T) {
 	if m.bar(*p, false, time.Now()) != "—" {
 		t.Fatal("no-check PR should not have an empty progress bar")
 	}
-	b, err := json.Marshal(exportSnapshot(*p))
-	if err != nil || !strings.Contains(string(b), `"status":"conflicts"`) || !strings.Contains(string(b), `"MergeStateStatus":"DIRTY"`) {
-		t.Fatal("JSON does not match merge readiness")
-	}
+
 	p.Details.Mergeable, p.Details.MergeStateStatus = "MERGEABLE", "CLEAN"
 	if !strings.Contains(m.View(), "No CI checks · Mergeable") {
 		t.Fatal("ready PR not shown as mergeable")

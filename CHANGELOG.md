@@ -1,10 +1,19 @@
 # Changelog
 
-## 1.0.0 — Work in progress
+## 1.1.0 — Work in progress
+
+- Organize links under BROWSE (`g` PR, `c` CI, `J` Jira) and commands under COPY (`G` gh, `C` Jenkins curl, `K` Jira URL); remove PR/table JSON clipboard exports. Keep discovery and manual Add under PRS. Use Home/End for first/last navigation.
+- Support saved and CLI compound sort orders such as `jira,target,repo`. Unticketed PRs follow Jira groups, ordered by the remaining keys; `jira` uses target, repository, and source branch order.
+- Make help easier to scan with styled sections and keys, a colored status legend, two columns in wide windows, and scrolling in smaller windows.
+- Make details easier to scan with section headings, bold labels, status colors, emphasized target branches, and underlined URLs; preserve plain-text readability with `--no-color`.
+- Add `target_branch_ignored_prefixes` to shorten TARGET labels while preserving full branch names in details and actions.
+- Add `--print-config` for all documented settings/defaults and `--edit-config` (`-e`) to create or edit the selected config in `$EDITOR`, then validate it.
+
+## 1.0.0 — 2026-10-01
 
 - Show the target branch in the table and detect leading Jira ticket IDs case-insensitively, with configurable project prefixes and base URL.
 - Add Jira URL open/copy shortcuts and grouping by ticket, repository, target branch, and source branch (`--sort jira`, also included in completions).
-- Indicate available branch updates and apply them from the TUI with confirmation, protection against changed heads, and a refresh after GitHub accepts the request. Prevent auto-quit while an update is pending.
+- Indicate available branch updates and apply them directly from the selected row with `u` (confirm) or `U` (without confirmation), protection against changed heads, and a refresh after GitHub accepts the request. Prevent auto-quit while an update is pending.
 - Show relative status ages from provider event times, with explicitly marked first-observed fallbacks that survive refreshes and session restores.
 - Briefly highlight pressed menu items with a bright pink background and black text.
 - Add a README demo GIF and a reproducible VHS tape with `make demo-gif`.
